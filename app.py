@@ -1,14 +1,17 @@
 import os
+import io
+import base64
 import streamlit as st
 from datetime import datetime
 import pytz
 import pandas as pd
 
-from db import init_db, load_news_history, load_latest_decision, load_recent_news
+from db import init_db, load_latest_decision, load_recent_news
 from auto_update import run_auto_update, should_auto_update
 from market_data import get_market_snapshot
 
 BJ_TZ = pytz.timezone("Asia/Shanghai")
+REPORTS_DIR = "reports"
 
 
 def to_beijing_time_str(value):
@@ -216,6 +219,157 @@ def render_section_title(title, subtitle=""):
     )
 
 
+def render_footer():
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style="
+            text-align:center;
+            color:#8d98aa;
+            font-size:13px;
+            padding-top:8px;
+            padding-bottom:6px;
+        ">
+            © 2026 Dongshan Hedge Fund Research System. All Rights Reserved.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def render_news_brief():
+    render_section_title("研究简报", "最近抓取新闻（最新 3 条）")
+    recent_news = load_recent_news(limit=3)
+
+    if not recent_news.empty:
+        for idx, item in recent_news.iterrows():
+            title = safe_text(item["news_title"], "无标题")
+            source = safe_text(item["source"], "未知")
+            published = to_beijing_time_str(item["published"])
+            explanation = safe_text(item["explanation"], "暂无说明")
+
+            st.markdown(
+                f"""
+                <div style="
+                    background:rgba(255,255,255,0.025);
+                    border:1px solid rgba(255,255,255,0.06);
+                    border-radius:16px;
+                    padding:18px 18px 16px 18px;
+                    margin-bottom:14px;
+                ">
+                    <div style="
+                        font-size:18px;
+                        font-weight:700;
+                        color:white;
+                        line-height:1.6;
+                        margin-bottom:8px;
+                    ">
+                        {idx + 1}. {title}
+                    </div>
+                    <div style="
+                        font-size:13px;
+                        color:#9eabbe;
+                        margin-bottom:10px;
+                    ">
+                        {source} ｜ {published}
+                    </div>
+                    <div style="
+                        font-size:14px;
+                        color:#d4dae4;
+                        line-height:1.8;
+                    ">
+                        {explanation}
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+    else:
+        st.write("暂无新闻数据。")
+
+
+def preview_repo_file(file_path, file_name):
+    suffix = file_name.lower().split(".")[-1]
+
+    st.markdown(f"### {file_name}")
+
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+
+    st.download_button(
+        label=f"下载 {file_name}",
+        data=file_bytes,
+        file_name=file_name,
+        use_container_width=True
+    )
+
+    if suffix in ["txt", "md", "py", "json", "csv"]:
+        try:
+            if suffix == "csv":
+                df = pd.read_csv(io.BytesIO(file_bytes))
+                st.dataframe(df, use_container_width=True)
+            else:
+                content = file_bytes.decode("utf-8", errors="ignore")
+                st.text_area("内容预览", content, height=300)
+        except Exception as e:
+            st.warning(f"预览失败：{e}")
+
+    elif suffix in ["png", "jpg", "jpeg", "webp"]:
+        st.image(file_bytes, use_container_width=True)
+
+    elif suffix == "pdf":
+        base64_pdf = base64.b64encode(file_bytes).decode("utf-8")
+        pdf_display = f"""
+        <iframe
+            src="data:application/pdf;base64,{base64_pdf}"
+            width="100%"
+            height="700"
+            type="application/pdf">
+        </iframe>
+        """
+        st.markdown(pdf_display, unsafe_allow_html=True)
+
+    else:
+        st.info("该文件类型暂不支持在线预览，但可下载阅读。")
+
+
+def preview_uploaded_file(uploaded_file):
+    file_name = uploaded_file.name
+    suffix = file_name.lower().split(".")[-1]
+    file_bytes = uploaded_file.read()
+
+    st.markdown(f"### 临时预览：{file_name}")
+
+    if suffix in ["txt", "md", "py", "json", "csv"]:
+        try:
+            if suffix == "csv":
+                df = pd.read_csv(io.BytesIO(file_bytes))
+                st.dataframe(df, use_container_width=True)
+            else:
+                content = file_bytes.decode("utf-8", errors="ignore")
+                st.text_area("内容预览", content, height=300)
+        except Exception as e:
+            st.warning(f"预览失败：{e}")
+
+    elif suffix in ["png", "jpg", "jpeg", "webp"]:
+        st.image(file_bytes, use_container_width=True)
+
+    elif suffix == "pdf":
+        base64_pdf = base64.b64encode(file_bytes).decode("utf-8")
+        pdf_display = f"""
+        <iframe
+            src="data:application/pdf;base64,{base64_pdf}"
+            width="100%"
+            height="700"
+            type="application/pdf">
+        </iframe>
+        """
+        st.markdown(pdf_display, unsafe_allow_html=True)
+
+    else:
+        st.info("该文件类型暂不支持在线预览。")
+
+
 st.set_page_config(
     page_title="东山对冲基金宏观决策系统",
     layout="wide",
@@ -225,7 +379,7 @@ st.set_page_config(
 init_db()
 
 st.sidebar.title("功能导航")
-page = st.sidebar.radio("请选择页面", ["首页总览", "历史新闻记录"])
+page = st.sidebar.radio("请选择页面", ["首页总览", "行情分析"])
 
 st.sidebar.markdown("---")
 st.sidebar.caption("版本：V1.0")
@@ -248,10 +402,8 @@ if page == "首页总览":
     latest_df = load_latest_decision()
 
     render_header()
-
     st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
-    # ===== 实时行情 =====
     @st.fragment(run_every="60s")
     def live_market_panel():
         render_section_title("实时行情", "跟踪主要风险资产与宏观敏感品种")
@@ -290,7 +442,6 @@ if page == "首页总览":
             )
 
     live_market_panel()
-
     st.markdown("---")
 
     if not latest_df.empty:
@@ -307,7 +458,6 @@ if page == "首页总览":
         if not news_update_time:
             news_update_time = update_time
 
-        # ===== 当前建议 =====
         render_section_title("当前建议", "核心决策视图")
 
         c1, c2, c3, c4 = st.columns(4)
@@ -322,7 +472,6 @@ if page == "首页总览":
 
         st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
-        # ===== 系统状态 =====
         render_section_title("系统状态", "最近有效更新与当前运行状态")
 
         s1, s2, s3 = st.columns(3)
@@ -336,7 +485,6 @@ if page == "首页总览":
 
         st.markdown("---")
 
-        # ===== 说明区 =====
         base_text = safe_text(row.get("base_explanation"), "暂无基础判断说明")
         news_text = safe_text(row.get("news_explanation"), "本轮未触发明确新闻修正规则")
 
@@ -352,55 +500,7 @@ if page == "首页总览":
 
         st.markdown("---")
 
-        # ===== 最近新闻 =====
-        render_section_title("研究简报", "最近抓取新闻（最新 3 条）")
-        recent_news = load_recent_news(limit=3)
-
-        if not recent_news.empty:
-            for idx, item in recent_news.iterrows():
-                title = safe_text(item["news_title"], "无标题")
-                source = safe_text(item["source"], "未知")
-                published = to_beijing_time_str(item["published"])
-                explanation = safe_text(item["explanation"], "暂无说明")
-
-                st.markdown(
-                    f"""
-                    <div style="
-                        background:rgba(255,255,255,0.025);
-                        border:1px solid rgba(255,255,255,0.06);
-                        border-radius:16px;
-                        padding:18px 18px 16px 18px;
-                        margin-bottom:14px;
-                    ">
-                        <div style="
-                            font-size:18px;
-                            font-weight:700;
-                            color:white;
-                            line-height:1.6;
-                            margin-bottom:8px;
-                        ">
-                            {idx + 1}. {title}
-                        </div>
-                        <div style="
-                            font-size:13px;
-                            color:#9eabbe;
-                            margin-bottom:10px;
-                        ">
-                            {source} ｜ {published}
-                        </div>
-                        <div style="
-                            font-size:14px;
-                            color:#d4dae4;
-                            line-height:1.8;
-                        ">
-                            {explanation}
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-        else:
-            st.write("暂无新闻数据。")
+        render_news_brief()
 
         with st.expander("数据来源说明 / 免责声明"):
             st.write("1. 中国宏观数据用于判定中国象限。")
@@ -411,34 +511,43 @@ if page == "首页总览":
     else:
         st.warning("当前还没有自动更新结果，请点击左侧“立即自动更新”。")
 
-elif page == "历史新闻记录":
-    render_section_title("历史新闻记录", "最多保留20条")
+    render_footer()
 
-    df = load_news_history()
+elif page == "行情分析":
+    render_header()
+    st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
-    if not df.empty:
-        show_df = df[[
-            "news_title",
-            "source",
-            "published",
-            "a_share_view",
-            "gold_view",
-            "crypto_view",
-            "commodity_view"
-        ]].copy()
+    render_section_title(
+        "行情分析",
+        "你可以把长期公开阅读的研究文件放到仓库 reports/ 文件夹；也可以临时上传文件进行本次预览。"
+    )
 
-        show_df["published"] = show_df["published"].apply(to_beijing_time_str)
+    st.markdown("## 公共阅读文件")
 
-        show_df.columns = [
-            "新闻标题",
-            "来源",
-            "发布时间（北京时间）",
-            "A股",
-            "黄金",
-            "加密",
-            "商品"
-        ]
+    if not os.path.exists(REPORTS_DIR):
+        os.makedirs(REPORTS_DIR, exist_ok=True)
 
-        st.dataframe(show_df, use_container_width=True, hide_index=True)
+    repo_files = sorted(os.listdir(REPORTS_DIR))
+
+    if repo_files:
+        selected_file = st.selectbox("选择一个公开文件", repo_files)
+
+        if selected_file:
+            file_path = os.path.join(REPORTS_DIR, selected_file)
+            preview_repo_file(file_path, selected_file)
     else:
-        st.write("当前还没有新闻记录。")
+        st.info("当前 reports/ 文件夹里还没有文件。你后续把文件上传到仓库的 reports/ 目录后，别人就可以在这里阅读。")
+
+    st.markdown("---")
+    st.markdown("## 临时上传预览")
+    st.caption("这里上传的文件只在当前会话中预览，不会自动保存给所有访问者。")
+
+    uploaded_file = st.file_uploader(
+        "上传文件进行临时预览",
+        type=["txt", "md", "csv", "pdf", "png", "jpg", "jpeg", "webp", "json"]
+    )
+
+    if uploaded_file is not None:
+        preview_uploaded_file(uploaded_file)
+
+    render_footer()
