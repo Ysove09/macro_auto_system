@@ -1,6 +1,7 @@
 import streamlit as st
 from datetime import datetime
 import pytz
+import pandas as pd
 
 from db import init_db, load_news_history, load_latest_decision, load_recent_news
 from auto_update import run_auto_update, should_auto_update
@@ -10,19 +11,46 @@ BJ_TZ = pytz.timezone("Asia/Shanghai")
 
 
 def to_beijing_time_str(value):
-    if not value:
+    if value is None:
         return ""
 
     try:
-        if "T" in str(value):
-            dt_obj = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if pd.isna(value):
+            return ""
+    except Exception:
+        pass
+
+    value_str = str(value).strip()
+    if value_str.lower() in ["", "none", "nan"]:
+        return ""
+
+    try:
+        if "T" in value_str:
+            dt_obj = datetime.fromisoformat(value_str.replace("Z", "+00:00"))
             dt_obj = dt_obj.astimezone(BJ_TZ)
             return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
         else:
-            dt_obj = datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
+            dt_obj = datetime.strptime(value_str, "%Y-%m-%d %H:%M:%S")
             return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
-        return str(value)
+        return value_str
+
+
+def safe_text(value, fallback=""):
+    if value is None:
+        return fallback
+
+    try:
+        if pd.isna(value):
+            return fallback
+    except Exception:
+        pass
+
+    value_str = str(value).strip()
+    if value_str.lower() in ["", "none", "nan"]:
+        return fallback
+
+    return value_str
 
 
 st.set_page_config(
@@ -45,7 +73,6 @@ if st.sidebar.button("立即自动更新", use_container_width=True):
         run_auto_update(force=True)
     st.sidebar.success("更新完成，请刷新页面查看。")
 
-# 自动检查：只在页面打开时检查一次是否过期
 if should_auto_update():
     try:
         with st.spinner("系统检测到超过1小时未更新，正在自动抓取新数据..."):
@@ -117,15 +144,28 @@ if page == "首页总览":
     if not latest_df.empty:
         row = latest_df.iloc[0]
 
-        st.subheader(f"最近更新时间（北京时间）：{to_beijing_time_str(row['update_time'])}")
+        update_time = to_beijing_time_str(row.get("update_time"))
+
+        # ===== 关键修复：空值自动兜底 =====
+        macro_update_time = to_beijing_time_str(row.get("macro_update_time"))
+        news_update_time = to_beijing_time_str(row.get("news_update_time"))
+        status_note = safe_text(row.get("status_note"), "系统运行正常")
+
+        if not macro_update_time:
+            macro_update_time = update_time
+
+        if not news_update_time:
+            news_update_time = update_time
+
+        st.subheader(f"最近更新时间（北京时间）：{update_time}")
 
         s1, s2, s3 = st.columns(3)
         with s1:
-            st.info(f"宏观最近成功更新时间：{to_beijing_time_str(row.get('macro_update_time', ''))}")
+            st.info(f"宏观最近成功更新时间：{macro_update_time}")
         with s2:
-            st.info(f"新闻最近成功更新时间：{to_beijing_time_str(row.get('news_update_time', ''))}")
+            st.info(f"新闻最近成功更新时间：{news_update_time}")
         with s3:
-            st.info(f"系统状态：{row.get('status_note', '未知')}")
+            st.info(f"系统状态：{status_note}")
 
         st.markdown("---")
 
@@ -142,24 +182,18 @@ if page == "首页总览":
         st.markdown("---")
         st.markdown("## 自动决策说明")
 
-        base_text = row.get("base_explanation", "")
-        news_text = row.get("news_explanation", "")
+        base_text = safe_text(row.get("base_explanation"), "暂无基础判断说明")
+        news_text = safe_text(row.get("news_explanation"), "本轮未触发明确新闻修正规则")
 
         c1, c2 = st.columns(2)
 
         with c1:
             st.markdown("### 基础判断")
-            if base_text:
-                st.info(base_text)
-            else:
-                st.info("暂无基础判断说明")
+            st.info(base_text)
 
         with c2:
             st.markdown("### 新闻修正")
-            if news_text:
-                st.warning(news_text)
-            else:
-                st.warning("本轮未触发明确新闻修正规则")
+            st.warning(news_text)
 
         st.markdown("---")
         st.markdown("## 最近抓取新闻")
@@ -169,10 +203,9 @@ if page == "首页总览":
         if not recent_news.empty:
             for _, item in recent_news.iterrows():
                 with st.expander(f"{item['news_title']}"):
-                    st.write(f"**来源：** {item['source']}")
+                    st.write(f"**来源：** {safe_text(item['source'], '未知')}")
                     st.write(f"**发布时间（北京时间）：** {to_beijing_time_str(item['published'])}")
-                    if item["explanation"]:
-                        st.write(f"**分析说明：** {item['explanation']}")
+                    st.write(f"**分析说明：** {safe_text(item['explanation'], '暂无说明')}")
         else:
             st.write("暂无新闻数据。")
 
