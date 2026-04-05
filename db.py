@@ -32,11 +32,15 @@ def init_db():
     CREATE TABLE IF NOT EXISTS latest_decision (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         update_time TEXT,
+        china_quadrant TEXT,
+        us_quadrant TEXT,
         a_share_view TEXT,
         gold_view TEXT,
         crypto_view TEXT,
         commodity_view TEXT,
-        summary TEXT
+        base_explanation TEXT,
+        news_explanation TEXT,
+        final_explanation TEXT
     )
     """)
 
@@ -48,7 +52,6 @@ def save_news_result(news_title, source, published, result):
     conn = get_conn()
     cursor = conn.cursor()
 
-    # 去重：同标题 + 同发布时间不重复插入
     cursor.execute("""
     SELECT COUNT(*)
     FROM news_analysis
@@ -84,15 +87,20 @@ def save_latest_decision(result):
 
     cursor.execute("""
     INSERT INTO latest_decision
-    (update_time, a_share_view, gold_view, crypto_view, commodity_view, summary)
-    VALUES (?, ?, ?, ?, ?, ?)
+    (update_time, china_quadrant, us_quadrant, a_share_view, gold_view, crypto_view, commodity_view,
+     base_explanation, news_explanation, final_explanation)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        result.get("china_quadrant", ""),
+        result.get("us_quadrant", ""),
         result["A股"],
         result["黄金"],
         result["加密"],
         result["商品"],
-        result["说明"]
+        result.get("base_explanation", ""),
+        result.get("news_explanation", ""),
+        result.get("说明", "")
     ))
 
     conn.commit()
@@ -121,7 +129,9 @@ def load_latest_decision():
     """, conn)
     conn.close()
     return df
-    def load_recent_news(limit=5):
+
+
+def load_recent_news(limit=5):
     conn = get_conn()
     df = pd.read_sql_query(f"""
     SELECT news_title, source, published, explanation
