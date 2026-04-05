@@ -1,19 +1,22 @@
 import requests
+import streamlit as st
 
-
-API_KEY = "YOUR_API_KEY"
+try:
+    API_KEY = st.secrets["API_KEY"]
+except Exception:
+    API_KEY = "YOUR_API_KEY"
 
 
 def fetch_latest_news():
     """
     用新闻 API 拉取新闻。
-    这里先写成通用结构，你只需要把 API_KEY 换成真实 key。
+    云端优先读取 Streamlit secrets 里的 API_KEY。
     """
 
     url = "https://newsapi.org/v2/everything"
 
     params = {
-        "q": "Federal Reserve OR China stimulus OR Bitcoin ETF OR gold safe haven",
+        "q": "Federal Reserve OR China stimulus OR Bitcoin ETF OR gold safe haven OR Iran war",
         "language": "en",
         "sortBy": "publishedAt",
         "pageSize": 10,
@@ -47,21 +50,4 @@ def fetch_latest_news():
 
     except Exception as e:
         print("API抓取失败：", e)
-
-        return [
-            {
-                "title": "美联储表态偏鹰，降息预期推迟",
-                "source": "API失败回退新闻源",
-                "published": "2026-04-04 22:00:00"
-            },
-            {
-                "title": "中国出台地产刺激政策，市场预期改善",
-                "source": "API失败回退新闻源",
-                "published": "2026-04-04 22:05:00"
-            },
-            {
-                "title": "比特币ETF持续净流入，市场情绪回暖",
-                "source": "API失败回退新闻源",
-                "published": "2026-04-04 22:10:00"
-            }
-        ]
+        return []
