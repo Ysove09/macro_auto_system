@@ -14,12 +14,12 @@ def to_beijing_time_str(value):
         return ""
 
     try:
-        if "T" in value:
-            dt_obj = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if "T" in str(value):
+            dt_obj = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
             dt_obj = dt_obj.astimezone(BJ_TZ)
             return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
         else:
-            dt_obj = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+            dt_obj = datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
             return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return str(value)
@@ -33,35 +33,43 @@ st.set_page_config(
 
 init_db()
 
-# 页面加载时：如果超过 1 小时没更新，就自动更新一次
-if should_auto_update():
-    run_auto_update()
-
 st.sidebar.title("功能导航")
 page = st.sidebar.radio("请选择页面", ["首页总览", "历史新闻记录"])
 
 st.sidebar.markdown("---")
 st.sidebar.caption("版本：V1.0")
-st.sidebar.caption("更新时间规则：打开页面时检查，超过1小时自动抓取；按钮点击可立即抓取")
+st.sidebar.caption("自动化规则：页面打开时若距离上次更新超过1小时，则自动更新一次")
 
 if st.sidebar.button("立即自动更新", use_container_width=True):
     with st.spinner("正在抓取新闻并更新决策..."):
         run_auto_update(force=True)
     st.sidebar.success("更新完成，请刷新页面查看。")
 
+# 自动检查：只在页面打开时检查一次是否过期
+if should_auto_update():
+    try:
+        with st.spinner("系统检测到超过1小时未更新，正在自动抓取新数据..."):
+            run_auto_update()
+    except Exception as e:
+        st.warning(f"自动更新失败，但页面仍会显示最近一次有效结果：{e}")
+
 
 def format_metric_value(price, unit):
+    if price is None:
+        return f"-- {unit}"
     return f"{price:,.2f} {unit}"
 
 
 def format_metric_delta(change, pct):
+    if change is None or pct is None:
+        return None
     sign = "+" if change > 0 else ""
     return f"{sign}{change:.2f} ({sign}{pct:.2f}%)"
 
 
 if page == "首页总览":
     st.title("自动宏观资产决策系统")
-    st.caption("基于象限判断 + 实时新闻修正")
+    st.caption("基于桥水风格公开版宏观框架 + 实时新闻修正")
 
     @st.fragment(run_every="60s")
     def live_market_panel():
@@ -110,6 +118,16 @@ if page == "首页总览":
         row = latest_df.iloc[0]
 
         st.subheader(f"最近更新时间（北京时间）：{to_beijing_time_str(row['update_time'])}")
+
+        s1, s2, s3 = st.columns(3)
+        with s1:
+            st.info(f"宏观最近成功更新时间：{to_beijing_time_str(row.get('macro_update_time', ''))}")
+        with s2:
+            st.info(f"新闻最近成功更新时间：{to_beijing_time_str(row.get('news_update_time', ''))}")
+        with s3:
+            st.info(f"系统状态：{row.get('status_note', '未知')}")
+
+        st.markdown("---")
 
         col1, col2 = st.columns(2)
 
