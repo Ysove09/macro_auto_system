@@ -69,23 +69,38 @@ def format_metric_delta(change, pct):
 
 def render_signal_card(title, signal):
     color_map = {
-        "开多": "#163d2a",
-        "开空": "#4a1f24",
-        "空仓": "#3a3f4b",
+        "开多": ("#153826", "#7CFFB2"),
+        "开空": ("#4A1F24", "#FF9B9B"),
+        "空仓": ("#343A46", "#D9DEE8"),
     }
-    bg = color_map.get(signal, "#2b2f38")
+    bg, fg = color_map.get(signal, ("#343A46", "#D9DEE8"))
 
     st.markdown(
         f"""
         <div style="
             background:{bg};
-            border-radius:16px;
-            padding:18px 20px;
-            min-height:120px;
+            border-radius:18px;
+            padding:22px 22px;
+            min-height:135px;
             border:1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 10px 25px rgba(0,0,0,0.18);
         ">
-            <div style="font-size:15px; color:#d0d4dc; margin-bottom:16px;">{title}</div>
-            <div style="font-size:36px; font-weight:700; color:white;">{signal}</div>
+            <div style="
+                font-size:15px;
+                color:#d0d4dc;
+                margin-bottom:18px;
+                letter-spacing:0.5px;
+            ">
+                {title}
+            </div>
+            <div style="
+                font-size:42px;
+                font-weight:800;
+                color:{fg};
+                line-height:1.1;
+            ">
+                {signal}
+            </div>
         </div>
         """,
         unsafe_allow_html=True
@@ -94,24 +109,39 @@ def render_signal_card(title, signal):
 
 def render_status_box(title, value, level="normal"):
     color_map = {
-        "ok": "#163d2a",
-        "warn": "#5a4520",
-        "error": "#4a1f24",
-        "normal": "#22324a"
+        "ok": "#143625",
+        "warn": "#5A4520",
+        "error": "#4A1F24",
+        "normal": "#22324A"
     }
-    bg = color_map.get(level, "#22324a")
+    bg = color_map.get(level, "#22324A")
 
     st.markdown(
         f"""
         <div style="
             background:{bg};
-            border-radius:14px;
-            padding:14px 16px;
-            min-height:88px;
+            border-radius:16px;
+            padding:16px 18px;
+            min-height:92px;
             border:1px solid rgba(255,255,255,0.06);
         ">
-            <div style="font-size:14px; color:#c8cfda; margin-bottom:10px;">{title}</div>
-            <div style="font-size:20px; font-weight:600; color:white; white-space:pre-line;">{value}</div>
+            <div style="
+                font-size:13px;
+                color:#c8cfda;
+                margin-bottom:10px;
+                letter-spacing:0.3px;
+            ">
+                {title}
+            </div>
+            <div style="
+                font-size:20px;
+                font-weight:700;
+                color:white;
+                white-space:pre-line;
+                line-height:1.5;
+            ">
+                {value}
+            </div>
         </div>
         """,
         unsafe_allow_html=True
@@ -130,9 +160,60 @@ def infer_status_level(status_note: str):
 def render_logo():
     logo_path = "24CF20B4-22EB-4000-A7B2-C171782EC782.png"
     if os.path.exists(logo_path):
-        st.image(logo_path, width=160)
+        st.image(logo_path, width=170)
     else:
         st.info("未找到 Logo 图片，请检查图片文件名是否正确。")
+
+
+def render_header():
+    left, right = st.columns([1, 5])
+
+    with left:
+        render_logo()
+
+    with right:
+        st.markdown(
+            """
+            <div style="padding-top:10px;">
+                <div style="
+                    font-size:44px;
+                    font-weight:900;
+                    color:white;
+                    letter-spacing:0.5px;
+                    line-height:1.2;
+                    margin-bottom:10px;
+                ">
+                    东山对冲基金宏观决策系统
+                </div>
+                <div style="
+                    font-size:18px;
+                    color:#c7ceda;
+                    margin-bottom:10px;
+                ">
+                    一生只做三件事：热爱、坚持、收获
+                </div>
+                <div style="
+                    font-size:14px;
+                    color:#97a3b6;
+                ">
+                    宏观判断 · 新闻修正 · 实时跟踪
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+def render_section_title(title, subtitle=""):
+    st.markdown(
+        f"""
+        <div style="margin-top:10px; margin-bottom:16px;">
+            <div style="font-size:24px; font-weight:800; color:white;">{title}</div>
+            {"<div style='font-size:14px; color:#9aa5b5; margin-top:6px;'>" + subtitle + "</div>" if subtitle else ""}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 
 st.set_page_config(
@@ -166,18 +247,15 @@ if should_auto_update():
 if page == "首页总览":
     latest_df = load_latest_decision()
 
-    col_logo, col_title = st.columns([1, 5])
+    render_header()
 
-    with col_logo:
-        render_logo()
+    st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
-    with col_title:
-        st.title("东山对冲基金宏观决策系统")
-        st.caption("一生只做三件事：热爱、坚持、收获")
-
+    # ===== 实时行情 =====
     @st.fragment(run_every="60s")
     def live_market_panel():
-        st.markdown("## 实时行情")
+        render_section_title("实时行情", "跟踪主要风险资产与宏观敏感品种")
+
         market = get_market_snapshot()
         st.caption(f"行情更新时间（北京时间）：{market['update_time']}")
 
@@ -229,7 +307,8 @@ if page == "首页总览":
         if not news_update_time:
             news_update_time = update_time
 
-        st.markdown("## 当前建议")
+        # ===== 当前建议 =====
+        render_section_title("当前建议", "核心决策视图")
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -241,9 +320,10 @@ if page == "首页总览":
         with c4:
             render_signal_card("商品", row["commodity_view"])
 
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
 
-        st.markdown("## 系统状态")
+        # ===== 系统状态 =====
+        render_section_title("系统状态", "最近有效更新与当前运行状态")
 
         s1, s2, s3 = st.columns(3)
         with s1:
@@ -256,33 +336,69 @@ if page == "首页总览":
 
         st.markdown("---")
 
+        # ===== 说明区 =====
         base_text = safe_text(row.get("base_explanation"), "暂无基础判断说明")
         news_text = safe_text(row.get("news_explanation"), "本轮未触发明确新闻修正规则")
 
         left, right = st.columns(2)
 
         with left:
-            st.markdown("## 基础判断")
+            render_section_title("基础判断")
             st.info(base_text)
 
         with right:
-            st.markdown("## 新闻修正")
+            render_section_title("新闻修正")
             st.warning(news_text)
 
         st.markdown("---")
 
-        st.markdown("## 最近抓取新闻（最新 3 条）")
+        # ===== 最近新闻 =====
+        render_section_title("研究简报", "最近抓取新闻（最新 3 条）")
         recent_news = load_recent_news(limit=3)
 
         if not recent_news.empty:
             for idx, item in recent_news.iterrows():
-                st.markdown(f"### {idx + 1}. {safe_text(item['news_title'], '无标题')}")
-                st.caption(
-                    f"来源：{safe_text(item['source'], '未知')} ｜ "
-                    f"发布时间：{to_beijing_time_str(item['published'])}"
+                title = safe_text(item["news_title"], "无标题")
+                source = safe_text(item["source"], "未知")
+                published = to_beijing_time_str(item["published"])
+                explanation = safe_text(item["explanation"], "暂无说明")
+
+                st.markdown(
+                    f"""
+                    <div style="
+                        background:rgba(255,255,255,0.025);
+                        border:1px solid rgba(255,255,255,0.06);
+                        border-radius:16px;
+                        padding:18px 18px 16px 18px;
+                        margin-bottom:14px;
+                    ">
+                        <div style="
+                            font-size:18px;
+                            font-weight:700;
+                            color:white;
+                            line-height:1.6;
+                            margin-bottom:8px;
+                        ">
+                            {idx + 1}. {title}
+                        </div>
+                        <div style="
+                            font-size:13px;
+                            color:#9eabbe;
+                            margin-bottom:10px;
+                        ">
+                            {source} ｜ {published}
+                        </div>
+                        <div style="
+                            font-size:14px;
+                            color:#d4dae4;
+                            line-height:1.8;
+                        ">
+                            {explanation}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
                 )
-                st.write(safe_text(item["explanation"], "暂无说明"))
-                st.markdown("---")
         else:
             st.write("暂无新闻数据。")
 
@@ -296,7 +412,7 @@ if page == "首页总览":
         st.warning("当前还没有自动更新结果，请点击左侧“立即自动更新”。")
 
 elif page == "历史新闻记录":
-    st.title("历史新闻记录（最多保留20条）")
+    render_section_title("历史新闻记录", "最多保留20条")
 
     df = load_news_history()
 
