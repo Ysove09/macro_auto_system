@@ -53,6 +53,79 @@ def safe_text(value, fallback=""):
     return value_str
 
 
+def format_metric_value(price, unit):
+    if price is None:
+        return f"-- {unit}"
+    return f"{price:,.2f} {unit}"
+
+
+def format_metric_delta(change, pct):
+    if change is None or pct is None:
+        return None
+    sign = "+" if change > 0 else ""
+    return f"{sign}{change:.2f} ({sign}{pct:.2f}%)"
+
+
+def render_signal_card(title, signal):
+    color_map = {
+        "开多": "#163d2a",
+        "开空": "#4a1f24",
+        "空仓": "#3a3f4b",
+    }
+    bg = color_map.get(signal, "#2b2f38")
+
+    st.markdown(
+        f"""
+        <div style="
+            background:{bg};
+            border-radius:16px;
+            padding:18px 20px;
+            min-height:120px;
+            border:1px solid rgba(255,255,255,0.08);
+        ">
+            <div style="font-size:15px; color:#d0d4dc; margin-bottom:16px;">{title}</div>
+            <div style="font-size:36px; font-weight:700; color:white;">{signal}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def render_status_box(title, value, level="normal"):
+    color_map = {
+        "ok": "#163d2a",
+        "warn": "#5a4520",
+        "error": "#4a1f24",
+        "normal": "#22324a"
+    }
+    bg = color_map.get(level, "#22324a")
+
+    st.markdown(
+        f"""
+        <div style="
+            background:{bg};
+            border-radius:14px;
+            padding:14px 16px;
+            min-height:80px;
+            border:1px solid rgba(255,255,255,0.06);
+        ">
+            <div style="font-size:14px; color:#c8cfda; margin-bottom:8px;">{title}</div>
+            <div style="font-size:20px; font-weight:600; color:white;">{value}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+def infer_status_level(status_note: str):
+    text = safe_text(status_note, "系统运行正常")
+    if "失败" in text or "异常" in text:
+        return "warn"
+    if "错误" in text or "崩" in text:
+        return "error"
+    return "ok"
+
+
 st.set_page_config(
     page_title="自动宏观资产决策系统",
     layout="wide",
@@ -81,28 +154,17 @@ if should_auto_update():
         st.warning(f"自动更新失败，但页面仍会显示最近一次有效结果：{e}")
 
 
-def format_metric_value(price, unit):
-    if price is None:
-        return f"-- {unit}"
-    return f"{price:,.2f} {unit}"
-
-
-def format_metric_delta(change, pct):
-    if change is None or pct is None:
-        return None
-    sign = "+" if change > 0 else ""
-    return f"{sign}{change:.2f} ({sign}{pct:.2f}%)"
-
-
 if page == "首页总览":
+    latest_df = load_latest_decision()
+
     st.title("自动宏观资产决策系统")
     st.caption("基于桥水风格公开版宏观框架 + 实时新闻修正")
 
+    # ===== 实时行情 =====
     @st.fragment(run_every="60s")
     def live_market_panel():
         st.markdown("## 实时行情")
         market = get_market_snapshot()
-
         st.caption(f"行情更新时间（北京时间）：{market['update_time']}")
 
         m1, m2, m3, m4 = st.columns(4)
@@ -139,75 +201,101 @@ if page == "首页总览":
 
     st.markdown("---")
 
-    latest_df = load_latest_decision()
-
     if not latest_df.empty:
         row = latest_df.iloc[0]
 
         update_time = to_beijing_time_str(row.get("update_time"))
-
-        # ===== 关键修复：空值自动兜底 =====
         macro_update_time = to_beijing_time_str(row.get("macro_update_time"))
         news_update_time = to_beijing_time_str(row.get("news_update_time"))
         status_note = safe_text(row.get("status_note"), "系统运行正常")
 
         if not macro_update_time:
             macro_update_time = update_time
-
         if not news_update_time:
             news_update_time = update_time
 
-        st.subheader(f"最近更新时间（北京时间）：{update_time}")
+        # ===== 当前建议 =====
+        st.markdown("## 当前建议")
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            render_signal_card("A股", row["a_share_view"])
+        with c2:
+            render_signal_card("黄金", row["gold_view"])
+        with c3:
+            render_signal_card("加密", row["crypto_view"])
+        with c4:
+            render_signal_card("商品", row["commodity_view"])
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        # ===== 状态区 =====
+        st.markdown("## 系统状态")
 
         s1, s2, s3 = st.columns(3)
         with s1:
-            st.info(f"宏观最近成功更新时间：{macro_update_time}")
+            render_status_box("最近更新时间（北京时间）", update_time, "normal")
         with s2:
-            st.info(f"新闻最近成功更新时间：{news_update_time}")
+            render_status_box("宏观 / 新闻更新时间", f"{macro_update_time}\n{news_update_time}", "normal")
         with s3:
-            st.info(f"系统状态：{status_note}")
+            render_status_box("系统状态", status_note, infer_status_level(status_note))
 
         st.markdown("---")
 
-        col1, col2 = st.columns(2)
-
-        with col1:
-            st.metric("A股当前建议", row["a_share_view"])
-            st.metric("黄金当前建议", row["gold_view"])
-
-        with col2:
-            st.metric("加密当前建议", row["crypto_view"])
-            st.metric("商品当前建议", row["commodity_view"])
-
-        st.markdown("---")
-        st.markdown("## 自动决策说明")
-
+        # ===== 说明区 =====
         base_text = safe_text(row.get("base_explanation"), "暂无基础判断说明")
         news_text = safe_text(row.get("news_explanation"), "本轮未触发明确新闻修正规则")
 
-        c1, c2 = st.columns(2)
+        left, right = st.columns(2)
 
-        with c1:
-            st.markdown("### 基础判断")
+        with left:
+            st.markdown("## 基础判断")
             st.info(base_text)
 
-        with c2:
-            st.markdown("### 新闻修正")
+        with right:
+            st.markdown("## 新闻修正")
             st.warning(news_text)
 
         st.markdown("---")
-        st.markdown("## 最近抓取新闻")
 
-        recent_news = load_recent_news(limit=5)
+        # ===== 最近新闻（精简）=====
+        st.markdown("## 最近抓取新闻（最新 3 条）")
+        recent_news = load_recent_news(limit=3)
 
         if not recent_news.empty:
             for _, item in recent_news.iterrows():
-                with st.expander(f"{item['news_title']}"):
-                    st.write(f"**来源：** {safe_text(item['source'], '未知')}")
-                    st.write(f"**发布时间（北京时间）：** {to_beijing_time_str(item['published'])}")
-                    st.write(f"**分析说明：** {safe_text(item['explanation'], '暂无说明')}")
+                with st.container():
+                    st.markdown(
+                        f"""
+                        <div style="
+                            border:1px solid rgba(255,255,255,0.08);
+                            border-radius:14px;
+                            padding:14px 16px;
+                            margin-bottom:12px;
+                            background:rgba(255,255,255,0.02);
+                        ">
+                            <div style="font-size:17px; font-weight:600; margin-bottom:8px;">
+                                {safe_text(item['news_title'], '无标题')}
+                            </div>
+                            <div style="font-size:13px; color:#b8c0cc; margin-bottom:8px;">
+                                来源：{safe_text(item['source'], '未知')} ｜ 发布时间：{to_beijing_time_str(item['published'])}
+                            </div>
+                            <div style="font-size:14px; color:#d7dce5;">
+                                {safe_text(item['explanation'], '暂无说明')}
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
         else:
             st.write("暂无新闻数据。")
+
+        # ===== 数据来源说明 =====
+        with st.expander("数据来源说明 / 免责声明"):
+            st.write("1. 中国宏观数据用于判定中国象限。")
+            st.write("2. 美国宏观数据用于判定美国象限。")
+            st.write("3. 新闻数据只用于修正，不单独决定长期基础判断。")
+            st.write("4. 本系统仅作研究展示，不构成任何投资建议。")
 
     else:
         st.warning("当前还没有自动更新结果，请点击左侧“立即自动更新”。")
