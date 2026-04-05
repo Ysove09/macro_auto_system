@@ -130,65 +130,9 @@ def infer_status_level(status_note: str):
 def render_logo():
     logo_path = "24CF20B4-22EB-4000-A7B2-C171782EC782.png"
     if os.path.exists(logo_path):
-        st.image(logo_path, width=180)
+        st.image(logo_path, width=160)
     else:
         st.info("未找到 Logo 图片，请检查图片文件名是否正确。")
-
-
-def render_news_card(title, source, published, explanation):
-    st.markdown(
-        f"""
-        <div style="
-            background: rgba(255,255,255,0.03);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 16px;
-            padding: 16px 18px;
-            margin-bottom: 14px;
-        ">
-            <div style="
-                font-size: 18px;
-                font-weight: 700;
-                color: white;
-                margin-bottom: 10px;
-                line-height: 1.5;
-            ">
-                {title}
-            </div>
-
-            <div style="
-                display:flex;
-                gap:10px;
-                flex-wrap:wrap;
-                margin-bottom:12px;
-            ">
-                <span style="
-                    background:#22324a;
-                    color:#dfe7f2;
-                    padding:4px 10px;
-                    border-radius:999px;
-                    font-size:12px;
-                ">来源：{source}</span>
-
-                <span style="
-                    background:#2f3a48;
-                    color:#dfe7f2;
-                    padding:4px 10px;
-                    border-radius:999px;
-                    font-size:12px;
-                ">发布时间：{published}</span>
-            </div>
-
-            <div style="
-                color:#d6dbe5;
-                font-size:14px;
-                line-height:1.7;
-            ">
-                {explanation}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
 
 
 st.set_page_config(
@@ -222,7 +166,6 @@ if should_auto_update():
 if page == "首页总览":
     latest_df = load_latest_decision()
 
-    # ===== 顶部 Logo + 标题 =====
     col_logo, col_title = st.columns([1, 5])
 
     with col_logo:
@@ -232,12 +175,10 @@ if page == "首页总览":
         st.title("东山对冲基金宏观决策系统")
         st.caption("一生只做三件事：热爱、坚持、收获")
 
-    # ===== 实时行情 =====
     @st.fragment(run_every="60s")
     def live_market_panel():
         st.markdown("## 实时行情")
         market = get_market_snapshot()
-
         st.caption(f"行情更新时间（北京时间）：{market['update_time']}")
 
         m1, m2, m3, m4 = st.columns(4)
@@ -330,18 +271,18 @@ if page == "首页总览":
 
         st.markdown("---")
 
-        # ===== 更精致的最近新闻列表 =====
         st.markdown("## 最近抓取新闻（最新 3 条）")
         recent_news = load_recent_news(limit=3)
 
         if not recent_news.empty:
-            for _, item in recent_news.iterrows():
-                render_news_card(
-                    title=safe_text(item["news_title"], "无标题"),
-                    source=safe_text(item["source"], "未知"),
-                    published=to_beijing_time_str(item["published"]),
-                    explanation=safe_text(item["explanation"], "暂无说明")
+            for idx, item in recent_news.iterrows():
+                st.markdown(f"### {idx + 1}. {safe_text(item['news_title'], '无标题')}")
+                st.caption(
+                    f"来源：{safe_text(item['source'], '未知')} ｜ "
+                    f"发布时间：{to_beijing_time_str(item['published'])}"
                 )
+                st.write(safe_text(item["explanation"], "暂无说明"))
+                st.markdown("---")
         else:
             st.write("暂无新闻数据。")
 
