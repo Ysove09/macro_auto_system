@@ -9,10 +9,20 @@ def get_conn():
     return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 
+def ensure_column(cursor, table_name, column_name, column_type):
+    cursor.execute(f"PRAGMA table_info({table_name})")
+    columns = [row[1] for row in cursor.fetchall()]
+    if column_name not in columns:
+        cursor.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}"
+        )
+
+
 def init_db():
     conn = get_conn()
     cursor = conn.cursor()
 
+    # 新闻表
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS news_analysis (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,21 +38,25 @@ def init_db():
     )
     """)
 
+    # 最新决策表（先建旧基础表）
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS latest_decision (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         update_time TEXT,
-        china_quadrant TEXT,
-        us_quadrant TEXT,
         a_share_view TEXT,
         gold_view TEXT,
         crypto_view TEXT,
         commodity_view TEXT,
-        base_explanation TEXT,
-        news_explanation TEXT,
         final_explanation TEXT
     )
     """)
+
+    # 自动补齐新字段
+    ensure_column(cursor, "latest_decision", "china_quadrant", "TEXT")
+    ensure_column(cursor, "latest_decision", "us_quadrant", "TEXT")
+    ensure_column(cursor, "latest_decision", "base_explanation", "TEXT")
+    ensure_column(cursor, "latest_decision", "news_explanation", "TEXT")
+    ensure_column(cursor, "latest_decision", "final_explanation", "TEXT")
 
     conn.commit()
     conn.close()
@@ -94,10 +108,10 @@ def save_latest_decision(result):
         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         result.get("china_quadrant", ""),
         result.get("us_quadrant", ""),
-        result["A股"],
-        result["黄金"],
-        result["加密"],
-        result["商品"],
+        result.get("A股", ""),
+        result.get("黄金", ""),
+        result.get("加密", ""),
+        result.get("商品", ""),
         result.get("base_explanation", ""),
         result.get("news_explanation", ""),
         result.get("说明", "")
