@@ -121,3 +121,13 @@ def load_latest_decision():
     """, conn)
     conn.close()
     return df
+    def load_recent_news(limit=5):
+    conn = get_conn()
+    df = pd.read_sql_query(f"""
+    SELECT news_title, source, published, explanation
+    FROM news_analysis
+    ORDER BY id DESC
+    LIMIT {limit}
+    """, conn)
+    conn.close()
+    return df
