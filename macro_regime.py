@@ -56,7 +56,10 @@ def _last_two_from_report(df, value_col="今值", date_col="日期", forecast_co
 
     forecast_val = None
     if forecast_col in temp.columns:
-        forecast_val = _safe_float(latest[forecast_col], default=None)
+        try:
+            forecast_val = float(latest[forecast_col])
+        except Exception:
+            forecast_val = None
 
     surprise = None
     if forecast_val is not None:
@@ -73,7 +76,7 @@ def _last_two_from_report(df, value_col="今值", date_col="日期", forecast_co
 
 def _last_two_from_simple(df, value_col, date_col):
     """
-    适用于中国 PMI / 社融等自定义列
+    适用于中国 PMI / 社融这类自定义列
     """
     temp = df.copy()
     temp[value_col] = pd.to_numeric(temp[value_col], errors="coerce")
@@ -95,9 +98,6 @@ def _last_two_from_simple(df, value_col, date_col):
 
 
 def _last_two_us_10y():
-    """
-    从 bond_zh_us_rate 获取美国10Y收益率最近两期
-    """
     df = ak.bond_zh_us_rate(start_date="20200101").copy()
     value_col = "美国国债收益率10年"
     date_col = "日期"
@@ -122,10 +122,16 @@ def _last_two_us_10y():
 
 def _last_two_oil():
     """
-    原油：用 CL=F 最近两日收盘做方向代理
+    原油：用 CL=F 最近 5 个日线收盘
     """
-    hist = yf.Ticker("CL=F").history(period="5d", interval="1d")
-    hist = hist.dropna(subset=["Close"]).reset_index()
+    hist = yf.Ticker("CL=F").history(period="7d", interval="1d")
+
+    if hist is None or hist.empty:
+        raise ValueError("原油数据为空")
+
+    hist = hist.reset_index()
+    hist["Close"] = pd.to_numeric(hist["Close"], errors="coerce")
+    hist = hist.dropna(subset=["Close"]).reset_index(drop=True)
 
     if len(hist) < 2:
         raise ValueError("原油数据不足两期")
@@ -184,16 +190,14 @@ def get_auto_quadrants():
     china_pmi = _last_two_from_simple(china_pmi_df, value_col="制造业-指数", date_col="月份")
     china_shrzgm = _last_two_from_simple(china_shrzgm_df, value_col="社会融资规模增量", date_col="月份")
 
-    # China growth:
-    # PMI delta + 社融 delta + PPI delta(工业景气代理)
+    # 中国增长分
     china_growth_score = (
         _direction(china_pmi["latest"], china_pmi["prev"])
         + _direction(china_shrzgm["latest"], china_shrzgm["prev"])
         + _direction(china_ppi["latest"], china_ppi["prev"])
     )
 
-    # China inflation:
-    # CPI delta + PPI delta + CPI surprise + PPI surprise
+    # 中国通胀分
     china_inflation_score = (
         _direction(china_cpi["latest"], china_cpi["prev"])
         + _direction(china_ppi["latest"], china_ppi["prev"])
@@ -219,27 +223,25 @@ def get_auto_quadrants():
     usa_ppi_df = ak.macro_usa_core_ppi()
     usa_retail_df = ak.macro_usa_retail_sales()
     usa_unemp_df = ak.macro_usa_unemployment_rate()
-    us10 = _last_two_us_10y()
-    oil = _last_two_oil()
 
     usa_cpi = _last_two_from_report(usa_cpi_df, value_col="今值", date_col="日期", forecast_col="预测值")
     usa_ppi = _last_two_from_report(usa_ppi_df, value_col="今值", date_col="日期", forecast_col="预测值")
     usa_retail = _last_two_from_report(usa_retail_df, value_col="今值", date_col="日期", forecast_col="预测值")
     usa_unemp = _last_two_from_report(usa_unemp_df, value_col="今值", date_col="日期", forecast_col="预测值")
+    us10 = _last_two_us_10y()
+    oil = _last_two_oil()
 
     real_yield_latest = us10["latest"] - usa_cpi["latest"]
     real_yield_prev = us10["prev"] - usa_cpi["prev"]
 
-    # US growth:
-    # 零售销售 delta + 零售销售 surprise + 工业活动代理(失业率反向)
+    # 美国增长分
     usa_growth_score = (
         _direction(usa_retail["latest"], usa_retail["prev"])
         + (_direction(usa_retail["surprise"], 0) if usa_retail["surprise"] is not None else 0)
         - _direction(usa_unemp["latest"], usa_unemp["prev"])
     )
 
-    # US inflation:
-    # CPI delta + Core PPI delta + CPI surprise + Core PPI surprise + 油价delta - 实际利率delta
+    # 美国通胀分
     usa_inflation_score = (
         _direction(usa_cpi["latest"], usa_cpi["prev"])
         + _direction(usa_ppi["latest"], usa_ppi["prev"])
