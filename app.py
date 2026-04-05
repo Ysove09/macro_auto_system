@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from datetime import datetime
 import pytz
@@ -126,6 +127,70 @@ def infer_status_level(status_note: str):
     return "ok"
 
 
+def render_logo():
+  logo_path = "24CF20B4-22EB-4000-A7B2-C171782EC782.png"
+    if os.path.exists(logo_path):
+        st.image(logo_path, width=180)
+    else:
+        st.info("未找到 logo.png，请先把 Logo 上传到项目根目录。")
+
+
+def render_news_card(title, source, published, explanation):
+    st.markdown(
+        f"""
+        <div style="
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 16px;
+            padding: 16px 18px;
+            margin-bottom: 14px;
+        ">
+            <div style="
+                font-size: 18px;
+                font-weight: 700;
+                color: white;
+                margin-bottom: 10px;
+                line-height: 1.5;
+            ">
+                {title}
+            </div>
+
+            <div style="
+                display:flex;
+                gap:10px;
+                flex-wrap:wrap;
+                margin-bottom:12px;
+            ">
+                <span style="
+                    background:#22324a;
+                    color:#dfe7f2;
+                    padding:4px 10px;
+                    border-radius:999px;
+                    font-size:12px;
+                ">来源：{source}</span>
+
+                <span style="
+                    background:#2f3a48;
+                    color:#dfe7f2;
+                    padding:4px 10px;
+                    border-radius:999px;
+                    font-size:12px;
+                ">发布时间：{published}</span>
+            </div>
+
+            <div style="
+                color:#d6dbe5;
+                font-size:14px;
+                line-height:1.7;
+            ">
+                {explanation}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
 st.set_page_config(
     page_title="东山对冲基金宏观决策系统",
     layout="wide",
@@ -157,8 +222,15 @@ if should_auto_update():
 if page == "首页总览":
     latest_df = load_latest_decision()
 
-    st.title("东山对冲基金宏观决策系统")
-    st.caption("一生只做三件事：热爱、坚持、收获")
+    # ===== 顶部 Logo + 标题 =====
+    col_logo, col_title = st.columns([1, 5])
+
+    with col_logo:
+        render_logo()
+
+    with col_title:
+        st.title("东山对冲基金宏观决策系统")
+        st.caption("一生只做三件事：热爱、坚持、收获")
 
     # ===== 实时行情 =====
     @st.fragment(run_every="60s")
@@ -236,7 +308,6 @@ if page == "首页总览":
         with s1:
             render_status_box("最近更新时间（北京时间）", update_time, "normal")
         with s2:
-            # 修复重复/挤在一起的问题：强制换行
             combined_time = f"宏观：{macro_update_time}\n新闻：{news_update_time}"
             render_status_box("宏观 / 新闻更新时间", combined_time, "normal")
         with s3:
@@ -259,34 +330,18 @@ if page == "首页总览":
 
         st.markdown("---")
 
+        # ===== 更精致的最近新闻列表 =====
         st.markdown("## 最近抓取新闻（最新 3 条）")
         recent_news = load_recent_news(limit=3)
 
         if not recent_news.empty:
             for _, item in recent_news.iterrows():
-                with st.container():
-                    st.markdown(
-                        f"""
-                        <div style="
-                            border:1px solid rgba(255,255,255,0.08);
-                            border-radius:14px;
-                            padding:14px 16px;
-                            margin-bottom:12px;
-                            background:rgba(255,255,255,0.02);
-                        ">
-                            <div style="font-size:17px; font-weight:600; margin-bottom:8px;">
-                                {safe_text(item['news_title'], '无标题')}
-                            </div>
-                            <div style="font-size:13px; color:#b8c0cc; margin-bottom:8px;">
-                                来源：{safe_text(item['source'], '未知')} ｜ 发布时间：{to_beijing_time_str(item['published'])}
-                            </div>
-                            <div style="font-size:14px; color:#d7dce5;">
-                                {safe_text(item['explanation'], '暂无说明')}
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
+                render_news_card(
+                    title=safe_text(item["news_title"], "无标题"),
+                    source=safe_text(item["source"], "未知"),
+                    published=to_beijing_time_str(item["published"]),
+                    explanation=safe_text(item["explanation"], "暂无说明")
+                )
         else:
             st.write("暂无新闻数据。")
 
