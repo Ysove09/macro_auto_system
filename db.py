@@ -62,6 +62,9 @@ def init_db():
     ensure_column(cursor, "latest_decision", "base_explanation", "TEXT")
     ensure_column(cursor, "latest_decision", "news_explanation", "TEXT")
     ensure_column(cursor, "latest_decision", "final_explanation", "TEXT")
+    ensure_column(cursor, "latest_decision", "macro_update_time", "TEXT")
+    ensure_column(cursor, "latest_decision", "news_update_time", "TEXT")
+    ensure_column(cursor, "latest_decision", "status_note", "TEXT")
 
     conn.commit()
     conn.close()
@@ -88,16 +91,16 @@ def save_news_result(news_title, source, published, result):
             news_title,
             source,
             published,
-            result["A股"],
-            result["黄金"],
-            result["加密"],
-            result["商品"],
-            result["说明"],
+            result.get("A股", ""),
+            result.get("黄金", ""),
+            result.get("加密", ""),
+            result.get("商品", ""),
+            result.get("说明", ""),
             bj_now_str()
         ))
         conn.commit()
 
-        # 只保留最新 20 条
+        # 只保留最近 20 条
         cursor.execute("""
         DELETE FROM news_analysis
         WHERE id NOT IN (
@@ -117,9 +120,22 @@ def save_latest_decision(result):
 
     cursor.execute("""
     INSERT INTO latest_decision
-    (update_time, china_quadrant, us_quadrant, a_share_view, gold_view, crypto_view, commodity_view,
-     base_explanation, news_explanation, final_explanation)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (
+        update_time,
+        china_quadrant,
+        us_quadrant,
+        a_share_view,
+        gold_view,
+        crypto_view,
+        commodity_view,
+        base_explanation,
+        news_explanation,
+        final_explanation,
+        macro_update_time,
+        news_update_time,
+        status_note
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         bj_now_str(),
         result.get("china_quadrant", ""),
@@ -130,7 +146,10 @@ def save_latest_decision(result):
         result.get("商品", ""),
         result.get("base_explanation", ""),
         result.get("news_explanation", ""),
-        result.get("说明", "")
+        result.get("说明", ""),
+        result.get("macro_update_time", ""),
+        result.get("news_update_time", ""),
+        result.get("status_note", ""),
     ))
 
     conn.commit()
