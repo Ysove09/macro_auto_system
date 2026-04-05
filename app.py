@@ -22,39 +22,59 @@ if st.sidebar.button("立即自动更新", use_container_width=True):
         run_auto_update()
     st.sidebar.success("更新完成，请刷新页面查看。")
 
+
+def format_metric_value(price, unit):
+    return f"{price:,.2f} {unit}"
+
+
+def format_metric_delta(change, pct):
+    sign = "+" if change > 0 else ""
+    return f"{sign}{change:.2f} ({sign}{pct:.2f}%)"
+
+
 if page == "首页总览":
     st.title("自动宏观资产决策系统")
     st.caption("基于象限判断 + 实时新闻修正")
 
-    # ===== 实时行情模块 =====
-    st.markdown("## 实时行情")
-    market = get_market_snapshot()
+    # ===== 自动刷新行情区 =====
+    @st.fragment(run_every="60s")
+    def live_market_panel():
+        st.markdown("## 实时行情")
+        market = get_market_snapshot()
 
-    m1, m2, m3, m4 = st.columns(4)
+        st.caption(f"行情更新时间：{market['update_time']}（每60秒自动刷新）")
 
-    with m1:
-        st.metric(
-            label=f"{market['sse']['name']}（{market['sse']['status']}）",
-            value=market["sse"]["price"]
-        )
+        m1, m2, m3, m4 = st.columns(4)
 
-    with m2:
-        st.metric(
-            label=f"{market['btc']['name']}（{market['btc']['status']}）",
-            value=market["btc"]["price"]
-        )
+        with m1:
+            st.metric(
+                label=f"{market['sse']['name']}（{market['sse']['status']}）",
+                value=format_metric_value(market["sse"]["price"], market["sse"]["unit"]),
+                delta=format_metric_delta(market["sse"]["change"], market["sse"]["pct"]),
+            )
 
-    with m3:
-        st.metric(
-            label=f"{market['gold']['name']}（{market['gold']['status']}）",
-            value=market["gold"]["price"]
-        )
+        with m2:
+            st.metric(
+                label=f"{market['btc']['name']}（{market['btc']['status']}）",
+                value=format_metric_value(market["btc"]["price"], market["btc"]["unit"]),
+                delta=format_metric_delta(market["btc"]["change"], market["btc"]["pct"]),
+            )
 
-    with m4:
-        st.metric(
-            label=f"{market['oil']['name']}（{market['oil']['status']}）",
-            value=market["oil"]["price"]
-        )
+        with m3:
+            st.metric(
+                label=f"{market['gold']['name']}（{market['gold']['status']}）",
+                value=format_metric_value(market["gold"]["price"], market["gold"]["unit"]),
+                delta=format_metric_delta(market["gold"]["change"], market["gold"]["pct"]),
+            )
+
+        with m4:
+            st.metric(
+                label=f"{market['oil']['name']}（{market['oil']['status']}）",
+                value=format_metric_value(market["oil"]["price"], market["oil"]["unit"]),
+                delta=format_metric_delta(market["oil"]["change"], market["oil"]["pct"]),
+            )
+
+    live_market_panel()
 
     st.markdown("---")
 
