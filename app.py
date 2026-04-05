@@ -128,11 +128,11 @@ def infer_status_level(status_note: str):
 
 
 def render_logo():
-  logo_path = "24CF20B4-22EB-4000-A7B2-C171782EC782.png"
+    logo_path = "24CF20B4-22EB-4000-A7B2-C171782EC782.png"
     if os.path.exists(logo_path):
         st.image(logo_path, width=180)
     else:
-        st.info("未找到 logo.png，请先把 Logo 上传到项目根目录。")
+        st.info("未找到 Logo 图片，请检查图片文件名是否正确。")
 
 
 def render_news_card(title, source, published, explanation):
