@@ -13,8 +13,8 @@ def get_base_decision(china_quadrant: str, us_quadrant: str, china_reason: str, 
         "china_quadrant": china_quadrant,
         "us_quadrant": us_quadrant,
         "base_explanation": (
-            f"中国象限={china_quadrant}，依据：{china_reason}\n"
-            f"美国象限={us_quadrant}，依据：{us_reason}"
+    f"中国象限：{china_quadrant}\n"
+    f"美国象限：{us_quadrant}"
         ),
         "说明": ""
     }
