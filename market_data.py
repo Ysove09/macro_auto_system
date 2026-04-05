@@ -1,6 +1,5 @@
 import datetime as dt
 import pytz
-import pandas as pd
 import akshare as ak
 import yfinance as yf
 import streamlit as st
@@ -29,35 +28,36 @@ def is_cn_futures_open():
     wd = now.weekday()
     t = now.time()
 
-    # 白天
     day_1 = dt.time(9, 0) <= t <= dt.time(10, 15)
     day_2 = dt.time(10, 30) <= t <= dt.time(11, 30)
     day_3 = dt.time(13, 30) <= t <= dt.time(15, 0)
-
-    # 夜盘（简化版，适用于黄金/原油主流时段）
     night_1 = dt.time(21, 0) <= t <= dt.time(23, 59, 59)
     night_2 = dt.time(0, 0) <= t <= dt.time(2, 30)
 
     if wd < 5 and (day_1 or day_2 or day_3 or night_1):
         return True
-
-    # 凌晨夜盘：周二到周六凌晨都可能是前一交易日晚盘延续
     if wd in [1, 2, 3, 4, 5] and night_2:
         return True
-
     return False
+
+
+def _safe_float(x, default=0.0):
+    try:
+        return float(x)
+    except Exception:
+        return default
 
 
 @st.cache_data(ttl=60)
 def get_sse_price():
     """
-    上证指数：开盘时显示最新价；未开盘显示昨收
+    上证指数：盘中用最新价，非盘中用昨收
     """
     df = ak.stock_zh_index_spot_em(symbol="上证系列指数")
     row = df[df["名称"] == "上证指数"].iloc[0]
 
-    latest = float(row["最新价"])
-    prev_close = float(row["昨收"])
+    latest = _safe_float(row["最新价"])
+    prev_close = _safe_float(row["昨收"])
 
     if is_cn_stock_open():
         price = latest
@@ -66,17 +66,23 @@ def get_sse_price():
         price = prev_close
         status = "上个交易日收盘"
 
+    change = price - prev_close
+    pct = (change / prev_close * 100) if prev_close else 0
+
     return {
         "name": "上证指数",
         "price": round(price, 2),
-        "status": status
+        "status": status,
+        "unit": "点",
+        "change": round(change, 2),
+        "pct": round(pct, 2),
     }
 
 
 @st.cache_data(ttl=60)
 def get_hujin_price():
     """
-    沪金（用黄金期货连续/主力近似显示）
+    沪金：用黄金期货连续/主力近似显示
     """
     df = ak.futures_zh_realtime(symbol="黄金")
 
@@ -86,8 +92,8 @@ def get_hujin_price():
     else:
         row = df.iloc[0]
 
-    trade = float(row["trade"])
-    preclose = float(row["preclose"])
+    trade = _safe_float(row["trade"])
+    preclose = _safe_float(row["preclose"])
 
     if is_cn_futures_open():
         price = trade
@@ -96,17 +102,23 @@ def get_hujin_price():
         price = preclose
         status = "上个交易日价格"
 
+    change = price - preclose
+    pct = (change / preclose * 100) if preclose else 0
+
     return {
         "name": "沪金",
         "price": round(price, 2),
-        "status": status
+        "status": status,
+        "unit": "元/克",
+        "change": round(change, 2),
+        "pct": round(pct, 2),
     }
 
 
 @st.cache_data(ttl=60)
 def get_oil_price():
     """
-    原油期货（用国内原油期货连续/主力近似显示）
+    原油期货：用国内原油期货连续/主力近似显示
     """
     df = ak.futures_zh_realtime(symbol="原油")
 
@@ -116,8 +128,8 @@ def get_oil_price():
     else:
         row = df.iloc[0]
 
-    trade = float(row["trade"])
-    preclose = float(row["preclose"])
+    trade = _safe_float(row["trade"])
+    preclose = _safe_float(row["preclose"])
 
     if is_cn_futures_open():
         price = trade
@@ -126,30 +138,48 @@ def get_oil_price():
         price = preclose
         status = "上个交易日价格"
 
+    change = price - preclose
+    pct = (change / preclose * 100) if preclose else 0
+
     return {
         "name": "原油期货",
         "price": round(price, 2),
-        "status": status
+        "status": status,
+        "unit": "元/桶",
+        "change": round(change, 2),
+        "pct": round(pct, 2),
     }
 
 
 @st.cache_data(ttl=60)
 def get_btc_spot():
     """
-    BTC 现货：7x24，直接显示最新可得价格
+    BTC 现货：7x24，直接显示最新价
     """
     ticker = yf.Ticker("BTC-USD")
-    hist = ticker.history(period="2d", interval="1m")
+    intraday = ticker.history(period="2d", interval="1m")
+    daily = ticker.history(period="5d", interval="1d")
 
-    if hist.empty:
-        hist = ticker.history(period="5d", interval="1d")
+    if intraday.empty:
+        latest = _safe_float(daily["Close"].dropna().iloc[-1])
+    else:
+        latest = _safe_float(intraday["Close"].dropna().iloc[-1])
 
-    latest_price = float(hist["Close"].dropna().iloc[-1])
+    if len(daily["Close"].dropna()) >= 2:
+        prev_close = _safe_float(daily["Close"].dropna().iloc[-2])
+    else:
+        prev_close = latest
+
+    change = latest - prev_close
+    pct = (change / prev_close * 100) if prev_close else 0
 
     return {
         "name": "BTC现货",
-        "price": round(latest_price, 2),
-        "status": "实时"
+        "price": round(latest, 2),
+        "status": "实时",
+        "unit": "USD",
+        "change": round(change, 2),
+        "pct": round(pct, 2),
     }
 
 
@@ -160,4 +190,5 @@ def get_market_snapshot():
         "btc": get_btc_spot(),
         "gold": get_hujin_price(),
         "oil": get_oil_price(),
+        "update_time": now_cn().strftime("%Y-%m-%d %H:%M:%S"),
     }
