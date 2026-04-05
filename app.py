@@ -1,7 +1,29 @@
 import streamlit as st
+from datetime import datetime
+import pytz
+
 from db import init_db, load_news_history, load_latest_decision, load_recent_news
-from auto_update import run_auto_update
+from auto_update import run_auto_update, should_auto_update
 from market_data import get_market_snapshot
+
+BJ_TZ = pytz.timezone("Asia/Shanghai")
+
+
+def to_beijing_time_str(value):
+    if not value:
+        return ""
+
+    try:
+        if "T" in value:
+            dt_obj = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            dt_obj = dt_obj.astimezone(BJ_TZ)
+            return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            dt_obj = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+            return dt_obj.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return str(value)
+
 
 st.set_page_config(
     page_title="自动宏观资产决策系统",
@@ -11,15 +33,20 @@ st.set_page_config(
 
 init_db()
 
+# 页面加载时：如果超过 1 小时没更新，就自动更新一次
+if should_auto_update():
+    run_auto_update()
+
 st.sidebar.title("功能导航")
 page = st.sidebar.radio("请选择页面", ["首页总览", "历史新闻记录"])
 
 st.sidebar.markdown("---")
 st.sidebar.caption("版本：V1.0")
+st.sidebar.caption("更新时间规则：打开页面时检查，超过1小时自动抓取；按钮点击可立即抓取")
 
 if st.sidebar.button("立即自动更新", use_container_width=True):
     with st.spinner("正在抓取新闻并更新决策..."):
-        run_auto_update()
+        run_auto_update(force=True)
     st.sidebar.success("更新完成，请刷新页面查看。")
 
 
@@ -36,13 +63,12 @@ if page == "首页总览":
     st.title("自动宏观资产决策系统")
     st.caption("基于象限判断 + 实时新闻修正")
 
-    # ===== 自动刷新行情区 =====
     @st.fragment(run_every="60s")
     def live_market_panel():
         st.markdown("## 实时行情")
         market = get_market_snapshot()
 
-        st.caption(f"行情更新时间：{market['update_time']}（每60秒自动刷新）")
+        st.caption(f"行情更新时间（北京时间）：{market['update_time']}")
 
         m1, m2, m3, m4 = st.columns(4)
 
@@ -83,7 +109,7 @@ if page == "首页总览":
     if not latest_df.empty:
         row = latest_df.iloc[0]
 
-        st.subheader(f"最近更新时间：{row['update_time']}")
+        st.subheader(f"最近更新时间（北京时间）：{to_beijing_time_str(row['update_time'])}")
 
         col1, col2 = st.columns(2)
 
@@ -98,22 +124,10 @@ if page == "首页总览":
         st.markdown("---")
         st.markdown("## 自动决策说明")
 
-        final_explanation = row.get("final_explanation", "")
-        base_text = ""
-        news_text = ""
-        conclusion_text = ""
+        base_text = row.get("base_explanation", "")
+        news_text = row.get("news_explanation", "")
 
-        if isinstance(final_explanation, str) and final_explanation:
-            lines = [x.strip() for x in final_explanation.split("\n") if x.strip()]
-            for line in lines:
-                if line.startswith("基础判断："):
-                    base_text = line.replace("基础判断：", "").strip()
-                elif line.startswith("新闻修正："):
-                    news_text = line.replace("新闻修正：", "").strip()
-                elif line.startswith("最终结论："):
-                    conclusion_text = line.replace("最终结论：", "").strip()
-
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
 
         with c1:
             st.markdown("### 基础判断")
@@ -127,14 +141,7 @@ if page == "首页总览":
             if news_text:
                 st.warning(news_text)
             else:
-                st.warning("暂无新闻修正")
-
-        with c3:
-            st.markdown("### 最终结论")
-            if conclusion_text:
-                st.success(conclusion_text)
-            else:
-                st.success("暂无最终结论")
+                st.warning("本轮未触发明确新闻修正规则")
 
         st.markdown("---")
         st.markdown("## 最近抓取新闻")
@@ -145,7 +152,7 @@ if page == "首页总览":
             for _, item in recent_news.iterrows():
                 with st.expander(f"{item['news_title']}"):
                     st.write(f"**来源：** {item['source']}")
-                    st.write(f"**发布时间：** {item['published']}")
+                    st.write(f"**发布时间（北京时间）：** {to_beijing_time_str(item['published'])}")
                     if item["explanation"]:
                         st.write(f"**分析说明：** {item['explanation']}")
         else:
@@ -155,7 +162,7 @@ if page == "首页总览":
         st.warning("当前还没有自动更新结果，请点击左侧“立即自动更新”。")
 
 elif page == "历史新闻记录":
-    st.title("历史新闻记录")
+    st.title("历史新闻记录（最多保留20条）")
 
     df = load_news_history()
 
@@ -170,10 +177,12 @@ elif page == "历史新闻记录":
             "commodity_view"
         ]].copy()
 
+        show_df["published"] = show_df["published"].apply(to_beijing_time_str)
+
         show_df.columns = [
             "新闻标题",
             "来源",
-            "发布时间",
+            "发布时间（北京时间）",
             "A股",
             "黄金",
             "加密",
