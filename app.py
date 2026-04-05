@@ -1,6 +1,7 @@
 import streamlit as st
 from db import init_db, load_news_history, load_latest_decision, load_recent_news
 from auto_update import run_auto_update
+from market_data import get_market_snapshot
 
 st.set_page_config(
     page_title="自动宏观资产决策系统",
@@ -19,11 +20,43 @@ st.sidebar.caption("版本：V1.0")
 if st.sidebar.button("立即自动更新", use_container_width=True):
     with st.spinner("正在抓取新闻并更新决策..."):
         run_auto_update()
-    st.sidebar.success("更新完成，请查看首页。")
+    st.sidebar.success("更新完成，请刷新页面查看。")
 
 if page == "首页总览":
     st.title("自动宏观资产决策系统")
     st.caption("基于象限判断 + 实时新闻修正")
+
+    # ===== 实时行情模块 =====
+    st.markdown("## 实时行情")
+    market = get_market_snapshot()
+
+    m1, m2, m3, m4 = st.columns(4)
+
+    with m1:
+        st.metric(
+            label=f"{market['sse']['name']}（{market['sse']['status']}）",
+            value=market["sse"]["price"]
+        )
+
+    with m2:
+        st.metric(
+            label=f"{market['btc']['name']}（{market['btc']['status']}）",
+            value=market["btc"]["price"]
+        )
+
+    with m3:
+        st.metric(
+            label=f"{market['gold']['name']}（{market['gold']['status']}）",
+            value=market["gold"]["price"]
+        )
+
+    with m4:
+        st.metric(
+            label=f"{market['oil']['name']}（{market['oil']['status']}）",
+            value=market["oil"]["price"]
+        )
+
+    st.markdown("---")
 
     latest_df = load_latest_decision()
 
@@ -43,8 +76,8 @@ if page == "首页总览":
             st.metric("商品当前建议", row["commodity_view"])
 
         st.markdown("---")
+        st.markdown("## 自动决策说明")
 
-        # 说明区拆分
         final_explanation = row.get("final_explanation", "")
         base_text = ""
         news_text = ""
@@ -59,8 +92,6 @@ if page == "首页总览":
                     news_text = line.replace("新闻修正：", "").strip()
                 elif line.startswith("最终结论："):
                     conclusion_text = line.replace("最终结论：", "").strip()
-
-        st.markdown("## 自动决策说明")
 
         c1, c2, c3 = st.columns(3)
 
@@ -86,13 +117,12 @@ if page == "首页总览":
                 st.success("暂无最终结论")
 
         st.markdown("---")
-
-        # 最近抓取新闻
         st.markdown("## 最近抓取新闻")
+
         recent_news = load_recent_news(limit=5)
 
         if not recent_news.empty:
-            for i, item in recent_news.iterrows():
+            for _, item in recent_news.iterrows():
                 with st.expander(f"{item['news_title']}"):
                     st.write(f"**来源：** {item['source']}")
                     st.write(f"**发布时间：** {item['published']}")
@@ -131,6 +161,5 @@ elif page == "历史新闻记录":
         ]
 
         st.dataframe(show_df, use_container_width=True, hide_index=True)
-
     else:
         st.write("当前还没有新闻记录。")
