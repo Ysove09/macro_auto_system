@@ -106,11 +106,11 @@ def render_status_box(title, value, level="normal"):
             background:{bg};
             border-radius:14px;
             padding:14px 16px;
-            min-height:80px;
+            min-height:88px;
             border:1px solid rgba(255,255,255,0.06);
         ">
-            <div style="font-size:14px; color:#c8cfda; margin-bottom:8px;">{title}</div>
-            <div style="font-size:20px; font-weight:600; color:white;">{value}</div>
+            <div style="font-size:14px; color:#c8cfda; margin-bottom:10px;">{title}</div>
+            <div style="font-size:20px; font-weight:600; color:white; white-space:pre-line;">{value}</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -127,7 +127,7 @@ def infer_status_level(status_note: str):
 
 
 st.set_page_config(
-    page_title="自动宏观资产决策系统",
+    page_title="东山对冲基金宏观决策系统",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -157,14 +157,15 @@ if should_auto_update():
 if page == "首页总览":
     latest_df = load_latest_decision()
 
-    st.title("自动宏观资产决策系统")
-    st.caption("基于桥水风格公开版宏观框架 + 实时新闻修正")
+    st.title("东山对冲基金宏观决策系统")
+    st.caption("一生只做三件事：热爱、坚持、收获")
 
     # ===== 实时行情 =====
     @st.fragment(run_every="60s")
     def live_market_panel():
         st.markdown("## 实时行情")
         market = get_market_snapshot()
+
         st.caption(f"行情更新时间（北京时间）：{market['update_time']}")
 
         m1, m2, m3, m4 = st.columns(4)
@@ -211,10 +212,10 @@ if page == "首页总览":
 
         if not macro_update_time:
             macro_update_time = update_time
+
         if not news_update_time:
             news_update_time = update_time
 
-        # ===== 当前建议 =====
         st.markdown("## 当前建议")
 
         c1, c2, c3, c4 = st.columns(4)
@@ -229,20 +230,20 @@ if page == "首页总览":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # ===== 状态区 =====
         st.markdown("## 系统状态")
 
         s1, s2, s3 = st.columns(3)
         with s1:
             render_status_box("最近更新时间（北京时间）", update_time, "normal")
         with s2:
-            render_status_box("宏观 / 新闻更新时间", f"{macro_update_time}\n{news_update_time}", "normal")
+            # 修复重复/挤在一起的问题：强制换行
+            combined_time = f"宏观：{macro_update_time}\n新闻：{news_update_time}"
+            render_status_box("宏观 / 新闻更新时间", combined_time, "normal")
         with s3:
             render_status_box("系统状态", status_note, infer_status_level(status_note))
 
         st.markdown("---")
 
-        # ===== 说明区 =====
         base_text = safe_text(row.get("base_explanation"), "暂无基础判断说明")
         news_text = safe_text(row.get("news_explanation"), "本轮未触发明确新闻修正规则")
 
@@ -258,7 +259,6 @@ if page == "首页总览":
 
         st.markdown("---")
 
-        # ===== 最近新闻（精简）=====
         st.markdown("## 最近抓取新闻（最新 3 条）")
         recent_news = load_recent_news(limit=3)
 
@@ -290,7 +290,6 @@ if page == "首页总览":
         else:
             st.write("暂无新闻数据。")
 
-        # ===== 数据来源说明 =====
         with st.expander("数据来源说明 / 免责声明"):
             st.write("1. 中国宏观数据用于判定中国象限。")
             st.write("2. 美国宏观数据用于判定美国象限。")
