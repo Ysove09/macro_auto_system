@@ -3,3 +3,4 @@ yfinance
 pytz
 pymupdf
 china-calendar
+requests
