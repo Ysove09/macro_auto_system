@@ -1,5 +1,4 @@
 import os
-import io
 from pathlib import Path
 from urllib.parse import quote
 from datetime import datetime
@@ -15,7 +14,7 @@ from market_data import get_market_snapshot
 BJ_TZ = pytz.timezone("Asia/Shanghai")
 REPORTS_DIR = "reports"
 
-# 这里写你自己的 GitHub 仓库信息
+# 这里写你的 GitHub 仓库信息
 GITHUB_USER = "Ysove09"
 GITHUB_REPO = "macro_auto_system"
 
@@ -316,89 +315,9 @@ def get_repo_reports():
     return files
 
 
-def preview_repo_file(file_path, file_name):
-    suffix = file_name.lower().split(".")[-1]
-
-    st.markdown(f"### {Path(file_name).stem}")
-
-    with open(file_path, "rb") as f:
-        file_bytes = f.read()
-
-    st.download_button(
-        label=f"下载 {file_name}",
-        data=file_bytes,
-        file_name=file_name,
-        use_container_width=True
-    )
-
-    if suffix in ["txt", "md", "py", "json", "csv"]:
-        try:
-            if suffix == "csv":
-                df = pd.read_csv(io.BytesIO(file_bytes))
-                st.dataframe(df, use_container_width=True)
-            else:
-                content = file_bytes.decode("utf-8", errors="ignore")
-                st.text_area("内容预览", content, height=300)
-        except Exception as e:
-            st.warning(f"预览失败：{e}")
-
-    elif suffix in ["png", "jpg", "jpeg", "webp"]:
-        st.image(file_bytes, use_container_width=True)
-
-    elif suffix == "pdf":
-        encoded_name = quote(file_name)
-        pdf_url = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/reports/{encoded_name}"
-        st.info("当前浏览器对嵌入式 PDF 兼容性较弱，建议点击下面按钮在新标签页阅读。")
-        st.link_button("新标签页打开 PDF", pdf_url, use_container_width=True)
-
-    elif suffix in ["doc", "docx"]:
-        st.info("Word 文件暂不支持网页内直接预览，请下载后阅读。")
-
-    else:
-        st.info("该文件类型暂不支持在线预览，但可下载阅读。")
-
-
-def preview_uploaded_file(uploaded_file):
-    file_name = uploaded_file.name
-    suffix = file_name.lower().split(".")[-1]
-    file_bytes = uploaded_file.read()
-
-    st.markdown(f"### 临时预览：{Path(file_name).stem}")
-
-    if suffix in ["txt", "md", "py", "json", "csv"]:
-        try:
-            if suffix == "csv":
-                df = pd.read_csv(io.BytesIO(file_bytes))
-                st.dataframe(df, use_container_width=True)
-            else:
-                content = file_bytes.decode("utf-8", errors="ignore")
-                st.text_area("内容预览", content, height=300)
-        except Exception as e:
-            st.warning(f"预览失败：{e}")
-
-    elif suffix in ["png", "jpg", "jpeg", "webp"]:
-        st.image(file_bytes, use_container_width=True)
-
-    elif suffix == "pdf":
-        st.info("临时上传的 PDF 建议下载阅读，或放到 reports/ 文件夹后使用新标签页打开。")
-        st.download_button(
-            label=f"下载 {file_name}",
-            data=file_bytes,
-            file_name=file_name,
-            use_container_width=True
-        )
-
-    elif suffix in ["doc", "docx"]:
-        st.info("Word 文件暂不支持网页内直接预览，但可以下载。")
-        st.download_button(
-            label=f"下载 {file_name}",
-            data=file_bytes,
-            file_name=file_name,
-            use_container_width=True
-        )
-
-    else:
-        st.info("该文件类型暂不支持在线预览。")
+def build_github_view_url(file_name):
+    encoded_name = quote(file_name)
+    return f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/blob/main/reports/{encoded_name}"
 
 
 def render_report_list():
@@ -410,12 +329,12 @@ def render_report_list():
         st.info("当前 reports/ 文件夹里还没有正式研究文件。")
         return
 
-    if "selected_report" not in st.session_state:
-        st.session_state.selected_report = None
-
-    for idx, report in enumerate(reports):
+    for report in reports:
         upload_time = datetime.fromtimestamp(report["mtime"], BJ_TZ).strftime("%Y-%m-%d %H:%M")
         title = safe_text(report["title"], "未命名文件")
+        file_name = report["file_name"]
+        file_path = report["file_path"]
+        view_url = build_github_view_url(file_name)
 
         st.markdown(
             f"""
@@ -455,29 +374,23 @@ def render_report_list():
         )
 
         c1, c2 = st.columns([1, 1])
+
         with c1:
-            if st.button(f"阅读全文 {idx + 1}", key=f"read_{idx}", use_container_width=True):
-                st.session_state.selected_report = report["file_name"]
+            st.link_button(
+                "阅读全文",
+                view_url,
+                use_container_width=True
+            )
+
         with c2:
-            with open(report["file_path"], "rb") as f:
+            with open(file_path, "rb") as f:
                 st.download_button(
-                    label=f"下载文件 {idx + 1}",
+                    label="下载全文",
                     data=f.read(),
-                    file_name=report["file_name"],
-                    key=f"download_{idx}",
+                    file_name=file_name,
+                    key=f"download_{file_name}",
                     use_container_width=True
                 )
-
-    if st.session_state.selected_report:
-        selected = None
-        for report in reports:
-            if report["file_name"] == st.session_state.selected_report:
-                selected = report
-                break
-
-        if selected:
-            st.markdown("---")
-            preview_repo_file(selected["file_path"], selected["file_name"])
 
 
 st.set_page_config(
@@ -500,7 +413,7 @@ if st.sidebar.button("立即自动更新", use_container_width=True):
         run_auto_update(force=True)
     st.sidebar.success("更新完成，请刷新页面查看。")
 
-# 只在首页自动检查更新
+# 只在首页自动检查
 if page == "首页总览" and should_auto_update():
     try:
         with st.spinner("系统检测到超过1小时未更新，正在自动抓取新数据..."):
@@ -626,18 +539,5 @@ if page == "首页总览":
 elif page == "行情分析":
     render_header()
     st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
-
     render_report_list()
-
-    st.markdown("---")
-    render_section_title("临时上传预览", "仅用于当前会话预览，不会自动保存给所有访问者")
-
-    uploaded_file = st.file_uploader(
-        "上传文件进行临时预览",
-        type=["txt", "md", "csv", "pdf", "png", "jpg", "jpeg", "webp", "json", "doc", "docx"]
-    )
-
-    if uploaded_file is not None:
-        preview_uploaded_file(uploaded_file)
-
     render_footer()
