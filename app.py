@@ -76,69 +76,6 @@ def format_metric_delta(change, pct):
     return f"{sign}{change:.2f} ({sign}{pct:.2f}%)"
 
 
-def infer_status_level(status_note: str):
-    text = safe_text(status_note, "系统运行正常")
-    if "失败" in text or "异常" in text or "沿用上次有效结果" in text:
-        return "warn"
-    if "错误" in text or "崩" in text:
-        return "error"
-    return "ok"
-
-
-def parse_system_status(status_note: str):
-    text = safe_text(status_note, "系统运行正常")
-
-    if text == "系统运行正常":
-        return {
-            "title": "系统运行正常",
-            "desc": "本轮宏观与新闻更新正常完成。",
-            "level": "ok",
-            "raw": ""
-        }
-
-    if "沿用上次有效结果" in text or "抓取失败" in text:
-        return {
-            "title": "部分数据源失败",
-            "desc": "系统已自动沿用上次有效结果，当前页面仍可正常使用。",
-            "level": "warn",
-            "raw": text
-        }
-
-    if "错误" in text or "崩" in text:
-        return {
-            "title": "本轮更新失败",
-            "desc": "请稍后重试，或手动点击“立即自动更新”。",
-            "level": "error",
-            "raw": text
-        }
-
-    return {
-        "title": "系统状态待确认",
-        "desc": text,
-        "level": "normal",
-        "raw": text
-    }
-
-
-def derive_source_status(raw_status_note: str, macro_time: str, news_time: str, update_time: str):
-    raw = safe_text(raw_status_note, "系统运行正常")
-
-    macro_status = "正常"
-    news_status = "正常"
-
-    if "沿用上次有效结果" in raw or "宏观数据抓取失败" in raw:
-        macro_status = "沿用上次有效结果"
-
-    if news_time and update_time and news_time == update_time:
-        news_status = "本轮正常更新"
-    elif news_time:
-        news_status = "已有有效结果"
-    else:
-        news_status = "待确认"
-
-    return macro_status, news_status
-
-
 def render_signal_card(title, signal):
     color_map = {
         "开多": ("#153826", "#7CFFB2"),
@@ -172,47 +109,6 @@ def render_signal_card(title, signal):
                 line-height:1.1;
             ">
                 {signal}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
-def render_status_box(title, value, level="normal"):
-    color_map = {
-        "ok": "#143625",
-        "warn": "#5A4520",
-        "error": "#4A1F24",
-        "normal": "#22324A"
-    }
-    bg = color_map.get(level, "#22324A")
-
-    st.markdown(
-        f"""
-        <div style="
-            background:{bg};
-            border-radius:16px;
-            padding:16px 18px;
-            min-height:92px;
-            border:1px solid rgba(255,255,255,0.06);
-        ">
-            <div style="
-                font-size:13px;
-                color:#c8cfda;
-                margin-bottom:10px;
-                letter-spacing:0.3px;
-            ">
-                {title}
-            </div>
-            <div style="
-                font-size:20px;
-                font-weight:700;
-                color:white;
-                white-space:pre-line;
-                line-height:1.5;
-            ">
-                {value}
             </div>
         </div>
         """,
@@ -707,22 +603,6 @@ if page == "首页总览":
     if not latest_df.empty:
         row = latest_df.iloc[0]
 
-        update_time = to_beijing_time_str(row.get("update_time"))
-        macro_update_time = to_beijing_time_str(row.get("macro_update_time"))
-        news_update_time = to_beijing_time_str(row.get("news_update_time"))
-        raw_status_note = safe_text(row.get("status_note"), "系统运行正常")
-        status_info = parse_system_status(raw_status_note)
-
-        if not macro_update_time:
-            macro_update_time = update_time
-
-        if not news_update_time:
-            news_update_time = update_time
-
-        macro_status, news_status = derive_source_status(
-            raw_status_note, macro_update_time, news_update_time, update_time
-        )
-
         render_change_summary(row)
         st.markdown("---")
 
@@ -738,34 +618,6 @@ if page == "首页总览":
             render_signal_card("加密", row["crypto_view"])
         with c4:
             render_signal_card("商品", row["commodity_view"])
-
-        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
-
-        render_section_title("系统状态", "最近有效更新与当前运行状态")
-
-        s1, s2, s3 = st.columns(3)
-        with s1:
-            render_status_box("最近更新时间（北京时间）", update_time, "normal")
-        with s2:
-            combined_time = f"宏观：{macro_update_time}\n新闻：{news_update_time}"
-            render_status_box("宏观 / 新闻更新时间", combined_time, "normal")
-        with s3:
-            system_status_text = f"{status_info['title']}\n{status_info['desc']}"
-            render_status_box("系统状态", system_status_text, status_info["level"])
-
-        if status_info["raw"]:
-            with st.expander("查看详细错误信息"):
-                st.code(status_info["raw"])
-
-        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
-
-        o1, o2, o3 = st.columns(3)
-        with o1:
-            render_status_box("宏观状态", macro_status, "normal")
-        with o2:
-            render_status_box("新闻状态", news_status, "normal")
-        with o3:
-            render_status_box("执行口径", "下一次有效更新前持续有效", "normal")
 
         st.markdown("---")
 
