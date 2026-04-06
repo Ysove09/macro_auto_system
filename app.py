@@ -1,5 +1,5 @@
 import os
-import io
+import sqlite3
 from pathlib import Path
 from datetime import datetime
 
@@ -294,6 +294,91 @@ def render_news_brief():
         st.write("暂无新闻数据。")
 
 
+def get_previous_decision():
+    db_candidates = ["macro_decision.db", "macro_auto.db"]
+
+    for db_path in db_candidates:
+        if not os.path.exists(db_path):
+            continue
+
+        try:
+            conn = sqlite3.connect(db_path)
+            query = """
+                SELECT *
+                FROM latest_decision
+                ORDER BY id DESC
+                LIMIT 1 OFFSET 1
+            """
+            df = pd.read_sql_query(query, conn)
+            conn.close()
+
+            if not df.empty:
+                return df.iloc[0]
+        except Exception:
+            continue
+
+    return None
+
+
+def render_change_summary(current_row):
+    previous_row = get_previous_decision()
+
+    render_section_title("本次结论变化", "与上一条有效结果对比")
+
+    if previous_row is None:
+        st.info("当前暂无可对比的上一条记录。")
+        return
+
+    assets = [
+        ("A股", "a_share_view"),
+        ("黄金", "gold_view"),
+        ("加密", "crypto_view"),
+        ("商品", "commodity_view"),
+    ]
+
+    changes = []
+    for label, col in assets:
+        prev_val = safe_text(previous_row.get(col), "")
+        curr_val = safe_text(current_row.get(col), "")
+        if prev_val != curr_val:
+            changes.append((label, prev_val, curr_val))
+
+    if not changes:
+        st.success("本轮无变化，四类资产建议与上一条记录一致。")
+        return
+
+    cols = st.columns(min(4, len(changes)))
+    for i, (label, prev_val, curr_val) in enumerate(changes):
+        with cols[i % len(cols)]:
+            st.markdown(
+                f"""
+                <div style="
+                    background:#22324A;
+                    border-radius:14px;
+                    padding:16px 18px;
+                    min-height:92px;
+                    border:1px solid rgba(255,255,255,0.06);
+                ">
+                    <div style="font-size:14px;color:#c8cfda;margin-bottom:10px;">{label}</div>
+                    <div style="font-size:16px;color:#9fb0c8;margin-bottom:6px;">{prev_val}</div>
+                    <div style="font-size:18px;color:#ffffff;">→ {curr_val}</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+
+def is_pinned_report(file_name: str):
+    return file_name.startswith("置顶_") or file_name.startswith("[置顶]")
+
+
+def clean_report_title(file_name: str):
+    title = Path(file_name).stem
+    title = title.replace("置顶_", "", 1)
+    title = title.replace("[置顶]", "", 1)
+    return title.strip()
+
+
 def get_repo_reports():
     if not os.path.exists(REPORTS_DIR):
         os.makedirs(REPORTS_DIR, exist_ok=True)
@@ -308,85 +393,13 @@ def get_repo_reports():
             files.append({
                 "file_name": file_name,
                 "file_path": file_path,
-                "title": Path(file_name).stem,
-                "mtime": os.path.getmtime(file_path)
+                "title": clean_report_title(file_name),
+                "mtime": os.path.getmtime(file_path),
+                "pinned": is_pinned_report(file_name),
             })
 
-    files = sorted(files, key=lambda x: x["mtime"], reverse=True)
+    files = sorted(files, key=lambda x: (not x["pinned"], -x["mtime"]))
     return files
-
-
-def render_report_cards():
-    render_section_title("行情分析", "研究文件列表")
-
-    reports = get_repo_reports()
-
-    if not reports:
-        st.info("当前 reports/ 文件夹里还没有正式研究文件。")
-        return
-
-    if "selected_report" not in st.session_state:
-        st.session_state.selected_report = None
-
-    for report in reports:
-        upload_time = datetime.fromtimestamp(report["mtime"], BJ_TZ).strftime("%Y-%m-%d %H:%M")
-        title = safe_text(report["title"], "未命名文件")
-        file_name = report["file_name"]
-        file_path = report["file_path"]
-
-        st.markdown(
-            f"""
-            <div style="
-                background:#f2f2f2;
-                border-radius:16px;
-                padding:22px 18px;
-                margin-bottom:14px;
-            ">
-                <div style="
-                    display:flex;
-                    align-items:flex-end;
-                    justify-content:space-between;
-                    gap:12px;
-                    flex-wrap:wrap;
-                ">
-                    <div style="
-                        font-size:42px;
-                        font-weight:800;
-                        color:#e53935;
-                        line-height:1.2;
-                    ">
-                        {title}
-                    </div>
-                    <div style="
-                        font-size:14px;
-                        color:#666666;
-                        white-space:nowrap;
-                        padding-bottom:6px;
-                    ">
-                        上传时间：{upload_time}
-                    </div>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        c1, c2 = st.columns([1, 1])
-
-        with c1:
-            if st.button("阅读全文", key=f"read_{file_name}", use_container_width=True):
-                st.session_state.selected_report = file_name
-                st.rerun()
-
-        with c2:
-            with open(file_path, "rb") as f:
-                st.download_button(
-                    label="下载全文",
-                    data=f.read(),
-                    file_name=file_name,
-                    key=f"download_{file_name}",
-                    use_container_width=True
-                )
 
 
 def render_pdf_pages(file_path):
@@ -397,7 +410,6 @@ def render_pdf_pages(file_path):
     try:
         doc = fitz.open(file_path)
         page_count = len(doc)
-
         st.caption(f"共 {page_count} 页")
 
         for i in range(page_count):
@@ -405,7 +417,10 @@ def render_pdf_pages(file_path):
             pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
             img_bytes = pix.tobytes("png")
             st.image(img_bytes, use_container_width=True)
-            st.markdown(f"<div style='text-align:center;color:#8d98aa;font-size:12px;margin-top:-6px;margin-bottom:16px;'>第 {i+1} 页</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='text-align:center;color:#8d98aa;font-size:12px;margin-top:-6px;margin-bottom:16px;'>第 {i+1} 页</div>",
+                unsafe_allow_html=True
+            )
 
         doc.close()
     except Exception as e:
@@ -420,7 +435,7 @@ def render_report_reader(file_name):
         return
 
     suffix = file_name.lower().split(".")[-1]
-    title = Path(file_name).stem
+    title = clean_report_title(file_name)
     upload_time = datetime.fromtimestamp(os.path.getmtime(file_path), BJ_TZ).strftime("%Y-%m-%d %H:%M")
 
     c1, c2 = st.columns([1, 5])
@@ -470,6 +485,95 @@ def render_report_reader(file_name):
 
     else:
         st.info("该文件类型暂不支持站内直接阅读，请下载后查看。")
+
+
+def render_report_cards():
+    render_section_title("行情分析", "研究文件列表")
+
+    reports = get_repo_reports()
+
+    if not reports:
+        st.info("当前 reports/ 文件夹里还没有正式研究文件。")
+        return
+
+    if "selected_report" not in st.session_state:
+        st.session_state.selected_report = None
+
+    for report in reports:
+        upload_time = datetime.fromtimestamp(report["mtime"], BJ_TZ).strftime("%Y-%m-%d %H:%M")
+        title = safe_text(report["title"], "未命名文件")
+        file_name = report["file_name"]
+        file_path = report["file_path"]
+        pinned = report["pinned"]
+
+        badge_html = ""
+        if pinned:
+            badge_html = """
+            <span style="
+                background:#c62828;
+                color:white;
+                font-size:12px;
+                padding:4px 10px;
+                border-radius:999px;
+                margin-left:10px;
+                vertical-align:middle;
+            ">置顶</span>
+            """
+
+        st.markdown(
+            f"""
+            <div style="
+                background:#f2f2f2;
+                border-radius:16px;
+                padding:22px 18px;
+                margin-bottom:14px;
+            ">
+                <div style="
+                    display:flex;
+                    align-items:flex-end;
+                    justify-content:space-between;
+                    gap:12px;
+                    flex-wrap:wrap;
+                ">
+                    <div style="
+                        font-size:42px;
+                        font-weight:800;
+                        color:#e53935;
+                        line-height:1.2;
+                    ">
+                        {title}
+                        {badge_html}
+                    </div>
+                    <div style="
+                        font-size:14px;
+                        color:#666666;
+                        white-space:nowrap;
+                        padding-bottom:6px;
+                    ">
+                        上传时间：{upload_time}
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        c1, c2 = st.columns([1, 1])
+
+        with c1:
+            if st.button("阅读全文", key=f"read_{file_name}", use_container_width=True):
+                st.session_state.selected_report = file_name
+                st.rerun()
+
+        with c2:
+            with open(file_path, "rb") as f:
+                st.download_button(
+                    label="下载全文",
+                    data=f.read(),
+                    file_name=file_name,
+                    key=f"download_{file_name}",
+                    use_container_width=True
+                )
 
 
 st.set_page_config(
@@ -559,6 +663,9 @@ if page == "首页总览":
 
         if not news_update_time:
             news_update_time = update_time
+
+        render_change_summary(row)
+        st.markdown("---")
 
         render_section_title("当前建议", "核心决策视图")
 
