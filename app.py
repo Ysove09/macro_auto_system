@@ -1,11 +1,12 @@
 import os
 import io
-import base64
 from pathlib import Path
-import streamlit as st
+from urllib.parse import quote
 from datetime import datetime
-import pytz
+
 import pandas as pd
+import pytz
+import streamlit as st
 
 from db import init_db, load_latest_decision, load_recent_news
 from auto_update import run_auto_update, should_auto_update
@@ -13,6 +14,10 @@ from market_data import get_market_snapshot
 
 BJ_TZ = pytz.timezone("Asia/Shanghai")
 REPORTS_DIR = "reports"
+
+# 这里写你自己的 GitHub 仓库信息
+GITHUB_USER = "Ysove09"
+GITHUB_REPO = "macro_auto_system"
 
 
 def to_beijing_time_str(value):
@@ -69,6 +74,15 @@ def format_metric_delta(change, pct):
         return None
     sign = "+" if change > 0 else ""
     return f"{sign}{change:.2f} ({sign}{pct:.2f}%)"
+
+
+def infer_status_level(status_note: str):
+    text = safe_text(status_note, "系统运行正常")
+    if "失败" in text or "异常" in text:
+        return "warn"
+    if "错误" in text or "崩" in text:
+        return "error"
+    return "ok"
 
 
 def render_signal_card(title, signal):
@@ -150,15 +164,6 @@ def render_status_box(title, value, level="normal"):
         """,
         unsafe_allow_html=True
     )
-
-
-def infer_status_level(status_note: str):
-    text = safe_text(status_note, "系统运行正常")
-    if "失败" in text or "异常" in text:
-        return "warn"
-    if "错误" in text or "崩" in text:
-        return "error"
-    return "ok"
 
 
 def render_logo():
@@ -289,6 +294,28 @@ def render_news_brief():
         st.write("暂无新闻数据。")
 
 
+def get_repo_reports():
+    if not os.path.exists(REPORTS_DIR):
+        os.makedirs(REPORTS_DIR, exist_ok=True)
+
+    files = []
+    for file_name in os.listdir(REPORTS_DIR):
+        if file_name.lower() == "readme.md":
+            continue
+
+        file_path = os.path.join(REPORTS_DIR, file_name)
+        if os.path.isfile(file_path):
+            files.append({
+                "file_name": file_name,
+                "file_path": file_path,
+                "title": Path(file_name).stem,
+                "mtime": os.path.getmtime(file_path)
+            })
+
+    files = sorted(files, key=lambda x: x["mtime"], reverse=True)
+    return files
+
+
 def preview_repo_file(file_path, file_name):
     suffix = file_name.lower().split(".")[-1]
 
@@ -319,41 +346,59 @@ def preview_repo_file(file_path, file_name):
         st.image(file_bytes, use_container_width=True)
 
     elif suffix == "pdf":
-        base64_pdf = base64.b64encode(file_bytes).decode("utf-8")
-        pdf_display = f"""
-        <iframe
-            src="data:application/pdf;base64,{base64_pdf}"
-            width="100%"
-            height="700"
-            type="application/pdf">
-        </iframe>
-        """
-        st.markdown(pdf_display, unsafe_allow_html=True)
+        encoded_name = quote(file_name)
+        pdf_url = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/reports/{encoded_name}"
+        st.info("当前浏览器对嵌入式 PDF 兼容性较弱，建议点击下面按钮在新标签页阅读。")
+        st.link_button("新标签页打开 PDF", pdf_url, use_container_width=True)
+
+    elif suffix in ["doc", "docx"]:
+        st.info("Word 文件暂不支持网页内直接预览，请下载后阅读。")
 
     else:
         st.info("该文件类型暂不支持在线预览，但可下载阅读。")
 
 
-def get_repo_reports():
-    if not os.path.exists(REPORTS_DIR):
-        os.makedirs(REPORTS_DIR, exist_ok=True)
+def preview_uploaded_file(uploaded_file):
+    file_name = uploaded_file.name
+    suffix = file_name.lower().split(".")[-1]
+    file_bytes = uploaded_file.read()
 
-    files = []
-    for file_name in os.listdir(REPORTS_DIR):
-        if file_name.lower() == "readme.md":
-            continue
+    st.markdown(f"### 临时预览：{Path(file_name).stem}")
 
-        file_path = os.path.join(REPORTS_DIR, file_name)
-        if os.path.isfile(file_path):
-            files.append({
-                "file_name": file_name,
-                "file_path": file_path,
-                "title": Path(file_name).stem,
-                "mtime": os.path.getmtime(file_path)
-            })
+    if suffix in ["txt", "md", "py", "json", "csv"]:
+        try:
+            if suffix == "csv":
+                df = pd.read_csv(io.BytesIO(file_bytes))
+                st.dataframe(df, use_container_width=True)
+            else:
+                content = file_bytes.decode("utf-8", errors="ignore")
+                st.text_area("内容预览", content, height=300)
+        except Exception as e:
+            st.warning(f"预览失败：{e}")
 
-    files = sorted(files, key=lambda x: x["mtime"], reverse=True)
-    return files
+    elif suffix in ["png", "jpg", "jpeg", "webp"]:
+        st.image(file_bytes, use_container_width=True)
+
+    elif suffix == "pdf":
+        st.info("临时上传的 PDF 建议下载阅读，或放到 reports/ 文件夹后使用新标签页打开。")
+        st.download_button(
+            label=f"下载 {file_name}",
+            data=file_bytes,
+            file_name=file_name,
+            use_container_width=True
+        )
+
+    elif suffix in ["doc", "docx"]:
+        st.info("Word 文件暂不支持网页内直接预览，但可以下载。")
+        st.download_button(
+            label=f"下载 {file_name}",
+            data=file_bytes,
+            file_name=file_name,
+            use_container_width=True
+        )
+
+    else:
+        st.info("该文件类型暂不支持在线预览。")
 
 
 def render_report_list():
@@ -455,6 +500,7 @@ if st.sidebar.button("立即自动更新", use_container_width=True):
         run_auto_update(force=True)
     st.sidebar.success("更新完成，请刷新页面查看。")
 
+# 只在首页自动检查更新
 if page == "首页总览" and should_auto_update():
     try:
         with st.spinner("系统检测到超过1小时未更新，正在自动抓取新数据..."):
@@ -580,5 +626,18 @@ if page == "首页总览":
 elif page == "行情分析":
     render_header()
     st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+
     render_report_list()
+
+    st.markdown("---")
+    render_section_title("临时上传预览", "仅用于当前会话预览，不会自动保存给所有访问者")
+
+    uploaded_file = st.file_uploader(
+        "上传文件进行临时预览",
+        type=["txt", "md", "csv", "pdf", "png", "jpg", "jpeg", "webp", "json", "doc", "docx"]
+    )
+
+    if uploaded_file is not None:
+        preview_uploaded_file(uploaded_file)
+
     render_footer()
