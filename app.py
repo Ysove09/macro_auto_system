@@ -1,6 +1,7 @@
 import os
 import io
 import base64
+from pathlib import Path
 import streamlit as st
 from datetime import datetime
 import pytz
@@ -291,7 +292,7 @@ def render_news_brief():
 def preview_repo_file(file_path, file_name):
     suffix = file_name.lower().split(".")[-1]
 
-    st.markdown(f"### {file_name}")
+    st.markdown(f"### {Path(file_name).stem}")
 
     with open(file_path, "rb") as f:
         file_bytes = f.read()
@@ -333,41 +334,105 @@ def preview_repo_file(file_path, file_name):
         st.info("该文件类型暂不支持在线预览，但可下载阅读。")
 
 
-def preview_uploaded_file(uploaded_file):
-    file_name = uploaded_file.name
-    suffix = file_name.lower().split(".")[-1]
-    file_bytes = uploaded_file.read()
+def get_repo_reports():
+    if not os.path.exists(REPORTS_DIR):
+        os.makedirs(REPORTS_DIR, exist_ok=True)
 
-    st.markdown(f"### 临时预览：{file_name}")
+    files = []
+    for file_name in os.listdir(REPORTS_DIR):
+        if file_name.lower() == "readme.md":
+            continue
 
-    if suffix in ["txt", "md", "py", "json", "csv"]:
-        try:
-            if suffix == "csv":
-                df = pd.read_csv(io.BytesIO(file_bytes))
-                st.dataframe(df, use_container_width=True)
-            else:
-                content = file_bytes.decode("utf-8", errors="ignore")
-                st.text_area("内容预览", content, height=300)
-        except Exception as e:
-            st.warning(f"预览失败：{e}")
+        file_path = os.path.join(REPORTS_DIR, file_name)
+        if os.path.isfile(file_path):
+            files.append({
+                "file_name": file_name,
+                "file_path": file_path,
+                "title": Path(file_name).stem,
+                "mtime": os.path.getmtime(file_path)
+            })
 
-    elif suffix in ["png", "jpg", "jpeg", "webp"]:
-        st.image(file_bytes, use_container_width=True)
+    files = sorted(files, key=lambda x: x["mtime"], reverse=True)
+    return files
 
-    elif suffix == "pdf":
-        base64_pdf = base64.b64encode(file_bytes).decode("utf-8")
-        pdf_display = f"""
-        <iframe
-            src="data:application/pdf;base64,{base64_pdf}"
-            width="100%"
-            height="700"
-            type="application/pdf">
-        </iframe>
-        """
-        st.markdown(pdf_display, unsafe_allow_html=True)
 
-    else:
-        st.info("该文件类型暂不支持在线预览。")
+def render_report_list():
+    render_section_title("行情分析", "研究文件列表")
+
+    reports = get_repo_reports()
+
+    if not reports:
+        st.info("当前 reports/ 文件夹里还没有正式研究文件。")
+        return
+
+    if "selected_report" not in st.session_state:
+        st.session_state.selected_report = None
+
+    for idx, report in enumerate(reports):
+        upload_time = datetime.fromtimestamp(report["mtime"], BJ_TZ).strftime("%Y-%m-%d %H:%M")
+        title = safe_text(report["title"], "未命名文件")
+
+        st.markdown(
+            f"""
+            <div style="
+                background:#f2f2f2;
+                border-radius:16px;
+                padding:22px 18px;
+                margin-bottom:14px;
+            ">
+                <div style="
+                    display:flex;
+                    align-items:flex-end;
+                    justify-content:space-between;
+                    gap:12px;
+                    flex-wrap:wrap;
+                ">
+                    <div style="
+                        font-size:42px;
+                        font-weight:800;
+                        color:#e53935;
+                        line-height:1.2;
+                    ">
+                        {title}
+                    </div>
+                    <div style="
+                        font-size:14px;
+                        color:#666666;
+                        white-space:nowrap;
+                        padding-bottom:6px;
+                    ">
+                        上传时间：{upload_time}
+                    </div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            if st.button(f"阅读全文 {idx + 1}", key=f"read_{idx}", use_container_width=True):
+                st.session_state.selected_report = report["file_name"]
+        with c2:
+            with open(report["file_path"], "rb") as f:
+                st.download_button(
+                    label=f"下载文件 {idx + 1}",
+                    data=f.read(),
+                    file_name=report["file_name"],
+                    key=f"download_{idx}",
+                    use_container_width=True
+                )
+
+    if st.session_state.selected_report:
+        selected = None
+        for report in reports:
+            if report["file_name"] == st.session_state.selected_report:
+                selected = report
+                break
+
+        if selected:
+            st.markdown("---")
+            preview_repo_file(selected["file_path"], selected["file_name"])
 
 
 st.set_page_config(
@@ -390,7 +455,6 @@ if st.sidebar.button("立即自动更新", use_container_width=True):
         run_auto_update(force=True)
     st.sidebar.success("更新完成，请刷新页面查看。")
 
-# 关键修改：只在首页总览页面自动检查
 if page == "首页总览" and should_auto_update():
     try:
         with st.spinner("系统检测到超过1小时未更新，正在自动抓取新数据..."):
@@ -516,38 +580,5 @@ if page == "首页总览":
 elif page == "行情分析":
     render_header()
     st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
-
-    render_section_title(
-        "行情分析",
-        "你可以把长期公开阅读的研究文件放到仓库 reports/ 文件夹；也可以临时上传文件进行本次预览。"
-    )
-
-    st.markdown("## 公共阅读文件")
-
-    if not os.path.exists(REPORTS_DIR):
-        os.makedirs(REPORTS_DIR, exist_ok=True)
-
-    repo_files = sorted(os.listdir(REPORTS_DIR))
-
-    if repo_files:
-        selected_file = st.selectbox("选择一个公开文件", repo_files)
-
-        if selected_file:
-            file_path = os.path.join(REPORTS_DIR, selected_file)
-            preview_repo_file(file_path, selected_file)
-    else:
-        st.info("当前 reports/ 文件夹里还没有文件。你后续把文件上传到仓库的 reports/ 目录后，别人就可以在这里阅读。")
-
-    st.markdown("---")
-    st.markdown("## 临时上传预览")
-    st.caption("这里上传的文件只在当前会话中预览，不会自动保存给所有访问者。")
-
-    uploaded_file = st.file_uploader(
-        "上传文件进行临时预览",
-        type=["txt", "md", "csv", "pdf", "png", "jpg", "jpeg", "webp", "json"]
-    )
-
-    if uploaded_file is not None:
-        preview_uploaded_file(uploaded_file)
-
+    render_report_list()
     render_footer()
