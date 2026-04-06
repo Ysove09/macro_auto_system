@@ -2,3 +2,4 @@ akshare
 yfinance
 pytz
 pymupdf
+china-calendar
