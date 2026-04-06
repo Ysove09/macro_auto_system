@@ -120,6 +120,25 @@ def parse_system_status(status_note: str):
     }
 
 
+def derive_source_status(raw_status_note: str, macro_time: str, news_time: str, update_time: str):
+    raw = safe_text(raw_status_note, "系统运行正常")
+
+    macro_status = "正常"
+    news_status = "正常"
+
+    if "沿用上次有效结果" in raw or "宏观数据抓取失败" in raw:
+        macro_status = "沿用上次有效结果"
+
+    if news_time and update_time and news_time == update_time:
+        news_status = "本轮正常更新"
+    elif news_time:
+        news_status = "已有有效结果"
+    else:
+        news_status = "待确认"
+
+    return macro_status, news_status
+
+
 def render_signal_card(title, signal):
     color_map = {
         "开多": ("#153826", "#7CFFB2"),
@@ -700,10 +719,15 @@ if page == "首页总览":
         if not news_update_time:
             news_update_time = update_time
 
+        macro_status, news_status = derive_source_status(
+            raw_status_note, macro_update_time, news_update_time, update_time
+        )
+
         render_change_summary(row)
         st.markdown("---")
 
         render_section_title("当前建议", "核心决策视图")
+        st.caption("当前建议为阶段性战术配置建议，自本次更新起生效，至下一次有效更新前持续有效。")
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -732,6 +756,16 @@ if page == "首页总览":
         if status_info["raw"]:
             with st.expander("查看详细错误信息"):
                 st.code(status_info["raw"])
+
+        st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+
+        o1, o2, o3 = st.columns(3)
+        with o1:
+            render_status_box("宏观状态", macro_status, "normal")
+        with o2:
+            render_status_box("新闻状态", news_status, "normal")
+        with o3:
+            render_status_box("执行口径", "下一次有效更新前持续有效", "normal")
 
         st.markdown("---")
 
