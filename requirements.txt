@@ -1,3 +1,4 @@
 akshare
 yfinance
 pytz
+pymupdf
