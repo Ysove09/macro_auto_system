@@ -1,6 +1,6 @@
 import os
+import io
 from pathlib import Path
-from urllib.parse import quote
 from datetime import datetime
 
 import pandas as pd
@@ -11,12 +11,13 @@ from db import init_db, load_latest_decision, load_recent_news
 from auto_update import run_auto_update, should_auto_update
 from market_data import get_market_snapshot
 
+try:
+    import fitz  # pymupdf
+except Exception:
+    fitz = None
+
 BJ_TZ = pytz.timezone("Asia/Shanghai")
 REPORTS_DIR = "reports"
-
-# 这里写你的 GitHub 仓库信息
-GITHUB_USER = "Ysove09"
-GITHUB_REPO = "macro_auto_system"
 
 
 def to_beijing_time_str(value):
@@ -315,12 +316,7 @@ def get_repo_reports():
     return files
 
 
-def build_github_view_url(file_name):
-    encoded_name = quote(file_name)
-    return f"https://github.com/{GITHUB_USER}/{GITHUB_REPO}/blob/main/reports/{encoded_name}"
-
-
-def render_report_list():
+def render_report_cards():
     render_section_title("行情分析", "研究文件列表")
 
     reports = get_repo_reports()
@@ -329,12 +325,14 @@ def render_report_list():
         st.info("当前 reports/ 文件夹里还没有正式研究文件。")
         return
 
+    if "selected_report" not in st.session_state:
+        st.session_state.selected_report = None
+
     for report in reports:
         upload_time = datetime.fromtimestamp(report["mtime"], BJ_TZ).strftime("%Y-%m-%d %H:%M")
         title = safe_text(report["title"], "未命名文件")
         file_name = report["file_name"]
         file_path = report["file_path"]
-        view_url = build_github_view_url(file_name)
 
         st.markdown(
             f"""
@@ -376,11 +374,9 @@ def render_report_list():
         c1, c2 = st.columns([1, 1])
 
         with c1:
-            st.link_button(
-                "阅读全文",
-                view_url,
-                use_container_width=True
-            )
+            if st.button("阅读全文", key=f"read_{file_name}", use_container_width=True):
+                st.session_state.selected_report = file_name
+                st.rerun()
 
         with c2:
             with open(file_path, "rb") as f:
@@ -391,6 +387,89 @@ def render_report_list():
                     key=f"download_{file_name}",
                     use_container_width=True
                 )
+
+
+def render_pdf_pages(file_path):
+    if fitz is None:
+        st.warning("当前环境未安装 pymupdf，暂时无法站内阅读 PDF。请先在 requirements.txt 里加入：pymupdf")
+        return
+
+    try:
+        doc = fitz.open(file_path)
+        page_count = len(doc)
+
+        st.caption(f"共 {page_count} 页")
+
+        for i in range(page_count):
+            page = doc.load_page(i)
+            pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
+            img_bytes = pix.tobytes("png")
+            st.image(img_bytes, use_container_width=True)
+            st.markdown(f"<div style='text-align:center;color:#8d98aa;font-size:12px;margin-top:-6px;margin-bottom:16px;'>第 {i+1} 页</div>", unsafe_allow_html=True)
+
+        doc.close()
+    except Exception as e:
+        st.error(f"PDF 站内阅读失败：{e}")
+
+
+def render_report_reader(file_name):
+    file_path = os.path.join(REPORTS_DIR, file_name)
+
+    if not os.path.exists(file_path):
+        st.error("文件不存在。")
+        return
+
+    suffix = file_name.lower().split(".")[-1]
+    title = Path(file_name).stem
+    upload_time = datetime.fromtimestamp(os.path.getmtime(file_path), BJ_TZ).strftime("%Y-%m-%d %H:%M")
+
+    c1, c2 = st.columns([1, 5])
+    with c1:
+        if st.button("返回列表", use_container_width=True):
+            st.session_state.selected_report = None
+            st.rerun()
+    with c2:
+        st.empty()
+
+    render_section_title(title, f"上传时间：{upload_time}")
+
+    with open(file_path, "rb") as f:
+        file_bytes = f.read()
+
+    st.download_button(
+        label=f"下载 {file_name}",
+        data=file_bytes,
+        file_name=file_name,
+        use_container_width=True
+    )
+
+    st.markdown("---")
+
+    if suffix == "pdf":
+        render_pdf_pages(file_path)
+
+    elif suffix in ["txt", "md", "py", "json"]:
+        try:
+            content = file_bytes.decode("utf-8", errors="ignore")
+            st.text_area("内容", content, height=700)
+        except Exception as e:
+            st.error(f"读取文本失败：{e}")
+
+    elif suffix == "csv":
+        try:
+            df = pd.read_csv(file_path)
+            st.dataframe(df, use_container_width=True)
+        except Exception as e:
+            st.error(f"读取 CSV 失败：{e}")
+
+    elif suffix in ["png", "jpg", "jpeg", "webp"]:
+        st.image(file_bytes, use_container_width=True)
+
+    elif suffix in ["doc", "docx"]:
+        st.info("Word 文件暂不支持站内直接阅读，请下载后查看。")
+
+    else:
+        st.info("该文件类型暂不支持站内直接阅读，请下载后查看。")
 
 
 st.set_page_config(
@@ -413,7 +492,6 @@ if st.sidebar.button("立即自动更新", use_container_width=True):
         run_auto_update(force=True)
     st.sidebar.success("更新完成，请刷新页面查看。")
 
-# 只在首页自动检查
 if page == "首页总览" and should_auto_update():
     try:
         with st.spinner("系统检测到超过1小时未更新，正在自动抓取新数据..."):
@@ -539,5 +617,13 @@ if page == "首页总览":
 elif page == "行情分析":
     render_header()
     st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
-    render_report_list()
+
+    if "selected_report" not in st.session_state:
+        st.session_state.selected_report = None
+
+    if st.session_state.selected_report:
+        render_report_reader(st.session_state.selected_report)
+    else:
+        render_report_cards()
+
     render_footer()
