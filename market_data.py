@@ -14,6 +14,32 @@ except Exception:
 BJ_TZ = pytz.timezone("Asia/Shanghai")
 
 
+# ============================================
+# 2026 年中国官方节假日 / 调休工作日（手动覆盖）
+# 这层是为了解决你说的：周一但在放假，不能误判为实时
+# ============================================
+CN_REST_DAYS_2026 = {
+    date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3),
+    date(2026, 2, 15), date(2026, 2, 16), date(2026, 2, 17), date(2026, 2, 18),
+    date(2026, 2, 19), date(2026, 2, 20), date(2026, 2, 21), date(2026, 2, 22), date(2026, 2, 23),
+    date(2026, 4, 4), date(2026, 4, 5), date(2026, 4, 6),
+    date(2026, 5, 1), date(2026, 5, 2), date(2026, 5, 3), date(2026, 5, 4), date(2026, 5, 5),
+    date(2026, 6, 19), date(2026, 6, 20), date(2026, 6, 21),
+    date(2026, 9, 25), date(2026, 9, 26), date(2026, 9, 27),
+    date(2026, 10, 1), date(2026, 10, 2), date(2026, 10, 3), date(2026, 10, 4),
+    date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7),
+}
+
+CN_WORKDAYS_2026 = {
+    date(2026, 1, 4),
+    date(2026, 2, 14),
+    date(2026, 2, 28),
+    date(2026, 5, 9),
+    date(2026, 9, 20),
+    date(2026, 10, 10),
+}
+
+
 def _now_bj() -> datetime:
     return datetime.now(BJ_TZ)
 
@@ -22,7 +48,7 @@ def _safe_float(value: Any) -> Optional[float]:
     try:
         if value is None:
             return None
-        text = str(value).replace(",", "").strip()
+        text = str(value).replace(",", "").replace("%", "").strip()
         if text == "" or text.lower() in {"nan", "none"}:
             return None
         return float(text)
@@ -30,23 +56,33 @@ def _safe_float(value: Any) -> Optional[float]:
         return None
 
 
-def _first_valid(row: pd.Series, candidates: Iterable[str]) -> Optional[float]:
+def _first_valid(obj: Any, candidates: Iterable[str]) -> Optional[float]:
     for col in candidates:
-        if col in row.index:
-            value = _safe_float(row[col])
-            if value is not None:
-                return value
+        try:
+            value = obj[col]
+            result = _safe_float(value)
+            if result is not None:
+                return result
+        except Exception:
+            continue
     return None
 
 
 def _is_cn_workday(d: date) -> bool:
+    # 先走 2026 官方手动覆盖
+    if d in CN_WORKDAYS_2026:
+        return True
+    if d in CN_REST_DAYS_2026:
+        return False
+
+    # 再走 china-calendar 通用库
     if china_calendar is not None:
         try:
             return bool(china_calendar.is_workday(d))
         except Exception:
             pass
 
-    # 兜底：如果 holiday 包失效，就退化成普通工作日判断
+    # 最后兜底
     return d.weekday() < 5
 
 
@@ -68,52 +104,54 @@ def _between(t: time, start: time, end: time) -> bool:
     return start <= t <= end
 
 
-def _is_cn_stock_open(dt: datetime) -> bool:
-    if not _is_cn_workday(dt.date()):
+def _is_cn_stock_open(dt_obj: datetime) -> bool:
+    if not _is_cn_workday(dt_obj.date()):
         return False
 
-    t = dt.time()
+    t = dt_obj.time()
     am = _between(t, time(9, 30), time(11, 30))
     pm = _between(t, time(13, 0), time(15, 0))
     return am or pm
 
 
-def _is_cn_futures_day_open(dt: datetime) -> bool:
-    if not _is_cn_workday(dt.date()):
+def _is_cn_futures_day_open(dt_obj: datetime) -> bool:
+    if not _is_cn_workday(dt_obj.date()):
         return False
 
-    t = dt.time()
+    t = dt_obj.time()
     s1 = _between(t, time(9, 0), time(10, 15))
     s2 = _between(t, time(10, 30), time(11, 30))
     s3 = _between(t, time(13, 30), time(15, 0))
     return s1 or s2 or s3
 
 
-def _is_cn_futures_night_open(dt: datetime) -> bool:
+def _is_cn_futures_night_open(dt_obj: datetime) -> bool:
     """
-    适配沪金、原油这类有夜盘的品种：
-    - 21:00~23:59：要求今天是工作日，且下一个自然日也是工作日
-    - 00:00~02:30：要求昨天是工作日，且今天是工作日
+    适配沪金 / 原油夜盘：
+    21:00-23:59：今天、明天都得是工作日
+    00:00-02:30：昨天、今天都得是工作日
     """
-    t = dt.time()
+    t = dt_obj.time()
+    today = dt_obj.date()
+    yesterday = today - timedelta(days=1)
+    tomorrow = today + timedelta(days=1)
 
     if _between(t, time(21, 0), time(23, 59, 59)):
-        today = dt.date()
-        tomorrow = today + timedelta(days=1)
         return _is_cn_workday(today) and _is_cn_workday(tomorrow)
 
     if _between(t, time(0, 0), time(2, 30)):
-        today = dt.date()
-        yesterday = today - timedelta(days=1)
         return _is_cn_workday(yesterday) and _is_cn_workday(today)
 
     return False
 
 
-def _is_cn_futures_open(dt: datetime) -> bool:
-    return _is_cn_futures_day_open(dt) or _is_cn_futures_night_open(dt)
+def _is_cn_futures_open(dt_obj: datetime) -> bool:
+    return _is_cn_futures_day_open(dt_obj) or _is_cn_futures_night_open(dt_obj)
 
 
+# ============================================
+# 上证指数
+# ============================================
 def _fetch_sse_index() -> Dict[str, Any]:
     now = _now_bj()
     is_open = _is_cn_stock_open(now)
@@ -124,9 +162,10 @@ def _fetch_sse_index() -> Dict[str, Any]:
         "change": 0.0,
         "pct": 0.0,
         "unit": "点",
-        "status": "上个交易日收盘",
+        "status": "实时" if is_open else "上个交易日收盘",
     }
 
+    # 先尝试实时接口
     try:
         df = ak.stock_zh_index_spot_em(symbol="上证系列指数")
         df["代码"] = df["代码"].astype(str).str.zfill(6)
@@ -137,21 +176,31 @@ def _fetch_sse_index() -> Dict[str, Any]:
         pct = _first_valid(row, ["涨跌幅"])
 
         result["price"] = price
-        result["change"] = change if change is not None else 0.0
-        result["pct"] = pct if pct is not None else 0.0
-        result["status"] = "实时" if is_open else "上个交易日收盘"
-
-        # 非交易时段统一按“上个交易日收盘”展示，不强调盘中波动
-        if not is_open:
-            result["change"] = 0.0
-            result["pct"] = 0.0
-
+        result["change"] = 0.0 if change is None or not is_open else change
+        result["pct"] = 0.0 if pct is None or not is_open else pct
     except Exception:
         pass
+
+    # 如果没拿到，再兜底历史日线
+    if result["price"] is None:
+        try:
+            prev_day = _prev_cn_workday(now.date()).strftime("%Y%m%d")
+            hist = ak.stock_zh_index_daily_em(symbol="sh000001")
+            if not hist.empty:
+                last_row = hist.iloc[-1]
+                result["price"] = _first_valid(last_row, ["close", "收盘"])
+                result["change"] = 0.0
+                result["pct"] = 0.0
+                result["status"] = "上个交易日收盘"
+        except Exception:
+            pass
 
     return result
 
 
+# ============================================
+# BTC
+# ============================================
 def _fetch_btc_spot() -> Dict[str, Any]:
     result = {
         "name": "BTC现货",
@@ -168,8 +217,7 @@ def _fetch_btc_spot() -> Dict[str, Any]:
             timeout=10
         )
         price_resp.raise_for_status()
-        price_json = price_resp.json()
-        result["price"] = _safe_float(price_json.get("price"))
+        result["price"] = _safe_float(price_resp.json().get("price"))
 
         stat_resp = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT",
@@ -179,56 +227,69 @@ def _fetch_btc_spot() -> Dict[str, Any]:
         stat_json = stat_resp.json()
         result["change"] = _safe_float(stat_json.get("priceChange"))
         result["pct"] = _safe_float(stat_json.get("priceChangePercent"))
-
     except Exception:
         pass
 
     return result
 
 
-def _extract_futures_row(df: pd.DataFrame, symbol_keywords: Iterable[str]) -> Optional[pd.Series]:
+# ============================================
+# 国内期货通用解析
+# ============================================
+def _extract_row(df: pd.DataFrame, keywords: Iterable[str]) -> Optional[pd.Series]:
     if df is None or df.empty:
         return None
 
-    for col in ["symbol", "代码", "合约", "名称", "品种"]:
-        if col in df.columns:
-            text_series = df[col].astype(str)
-            for kw in symbol_keywords:
-                matched = df[text_series.str.contains(str(kw), case=False, na=False)]
-                if not matched.empty:
-                    return matched.iloc[0]
+    text_cols = [c for c in df.columns if df[c].dtype == "object"]
 
-    return df.iloc[0]
+    for _, row in df.iterrows():
+        joined = " ".join([str(row[c]) for c in text_cols if pd.notna(row[c])])
+        for kw in keywords:
+            if str(kw).lower() in joined.lower():
+                return row
+
+    return None
 
 
-def _try_fetch_futures_realtime(symbol_candidates: Iterable[str], row_keywords: Iterable[str]) -> Optional[pd.Series]:
+def _try_futures_realtime(symbol_candidates: Iterable[str], row_keywords: Iterable[str]) -> Optional[pd.Series]:
     for sym in symbol_candidates:
         try:
             df = ak.futures_zh_realtime(symbol=sym)
-            row = _extract_futures_row(df, row_keywords)
+            row = _extract_row(df, row_keywords)
             if row is not None:
                 return row
+            if df is not None and not df.empty:
+                return df.iloc[0]
         except Exception:
             continue
     return None
 
 
-def _try_fetch_futures_spot(symbol_candidates: Iterable[str], row_keywords: Iterable[str]) -> Optional[pd.Series]:
+def _try_futures_spot(symbol_candidates: Iterable[str], row_keywords: Iterable[str]) -> Optional[pd.Series]:
+    for sym in symbol_candidates:
+        try:
+            df = ak.futures_zh_spot(symbol=sym)
+            row = _extract_row(df, row_keywords)
+            if row is not None:
+                return row
+            if df is not None and not df.empty:
+                return df.iloc[0]
+        except Exception:
+            continue
+    return None
+
+
+def _try_futures_main_hist(symbol_candidates: Iterable[str]) -> Optional[pd.DataFrame]:
     """
-    兼容一些 AKShare / 新浪期货接口版本。
+    节假日/停盘时，尽量回退到连续合约历史日线
     """
     for sym in symbol_candidates:
-        for market in ["CF", "FF", ""]:
-            try:
-                if market:
-                    df = ak.futures_zh_spot(symbol=sym, market=market, adjust="0")
-                else:
-                    df = ak.futures_zh_spot(symbol=sym)
-                row = _extract_futures_row(df, row_keywords)
-                if row is not None:
-                    return row
-            except Exception:
-                continue
+        try:
+            df = ak.futures_main_sina(symbol=sym)
+            if df is not None and not df.empty:
+                return df
+        except Exception:
+            continue
     return None
 
 
@@ -250,34 +311,51 @@ def _fetch_cn_futures(
         "status": "实时" if is_open else "上个交易日价格",
     }
 
-    row = _try_fetch_futures_realtime(symbol_candidates, row_keywords)
+    row = _try_futures_realtime(symbol_candidates, row_keywords)
     if row is None:
-        row = _try_fetch_futures_spot(symbol_candidates, row_keywords)
+        row = _try_futures_spot(symbol_candidates, row_keywords)
 
-    if row is None:
-        return result
+    if row is not None:
+        price = _first_valid(row, ["最新价", "最新", "现价", "收盘价", "最新行情价"])
+        prev_close = _first_valid(row, ["昨收", "昨结算", "昨结", "前收盘价", "昨日收盘价"])
+        change = _first_valid(row, ["涨跌额", "涨跌", "涨跌值"])
+        pct = _first_valid(row, ["涨跌幅", "涨跌幅度"])
 
-    price = _first_valid(row, ["最新价", "最新", "现价", "最新行情价", "收盘价"])
-    prev_close = _first_valid(row, ["昨收", "昨结算", "昨结", "前收盘价", "昨日收盘价"])
-    change = _first_valid(row, ["涨跌额", "涨跌", "涨跌值"])
-    pct = _first_valid(row, ["涨跌幅", "涨跌幅度"])
+        result["price"] = price
 
-    result["price"] = price
+        if is_open:
+            if change is None and price is not None and prev_close not in (None, 0):
+                change = price - prev_close
+            if pct is None and change is not None and prev_close not in (None, 0):
+                pct = change / prev_close * 100
 
-    if is_open:
-        if change is None and price is not None and prev_close not in (None, 0):
-            change = price - prev_close
-        if pct is None and change is not None and prev_close not in (None, 0):
-            pct = change / prev_close * 100
+            result["change"] = 0.0 if change is None else change
+            result["pct"] = 0.0 if pct is None else pct
+            result["status"] = "实时"
+        else:
+            result["change"] = 0.0
+            result["pct"] = 0.0
+            result["status"] = "上个交易日价格"
 
-        result["change"] = 0.0 if change is None else change
-        result["pct"] = 0.0 if pct is None else pct
-        result["status"] = "实时"
-    else:
-        # 非交易时段统一按“上个交易日价格”展示
-        result["change"] = 0.0
-        result["pct"] = 0.0
-        result["status"] = "上个交易日价格"
+    # 如果实时接口没拿到，就退回历史连续合约收盘
+    if result["price"] is None:
+        hist = _try_futures_main_hist(symbol_candidates)
+        if hist is not None and not hist.empty:
+            last_row = hist.iloc[-1]
+            prev_row = hist.iloc[-2] if len(hist) >= 2 else None
+
+            close = _first_valid(last_row, ["close", "收盘", "收盘价", "最新价"])
+            prev_close = _first_valid(prev_row, ["close", "收盘", "收盘价", "最新价"]) if prev_row is not None else None
+
+            result["price"] = close
+            result["status"] = "上个交易日价格"
+
+            if close is not None and prev_close not in (None, 0):
+                result["change"] = close - prev_close
+                result["pct"] = (close - prev_close) / prev_close * 100
+            else:
+                result["change"] = 0.0
+                result["pct"] = 0.0
 
     return result
 
@@ -291,7 +369,7 @@ def get_market_snapshot() -> Dict[str, Any]:
     gold = _fetch_cn_futures(
         display_name="沪金",
         symbol_candidates=["AU0", "AU", "au", "沪金"],
-        row_keywords=["AU0", "AU", "au", "沪金"],
+        row_keywords=["AU0", "AU", "au", "沪金", "黄金"],
         unit="元/克"
     )
 
