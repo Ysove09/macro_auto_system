@@ -78,11 +78,46 @@ def format_metric_delta(change, pct):
 
 def infer_status_level(status_note: str):
     text = safe_text(status_note, "系统运行正常")
-    if "失败" in text or "异常" in text:
+    if "失败" in text or "异常" in text or "沿用上次有效结果" in text:
         return "warn"
     if "错误" in text or "崩" in text:
         return "error"
     return "ok"
+
+
+def parse_system_status(status_note: str):
+    text = safe_text(status_note, "系统运行正常")
+
+    if text == "系统运行正常":
+        return {
+            "title": "系统运行正常",
+            "desc": "本轮宏观与新闻更新正常完成。",
+            "level": "ok",
+            "raw": ""
+        }
+
+    if "沿用上次有效结果" in text or "抓取失败" in text:
+        return {
+            "title": "部分数据源失败",
+            "desc": "系统已自动沿用上次有效结果，当前页面仍可正常使用。",
+            "level": "warn",
+            "raw": text
+        }
+
+    if "错误" in text or "崩" in text:
+        return {
+            "title": "本轮更新失败",
+            "desc": "请稍后重试，或手动点击“立即自动更新”。",
+            "level": "error",
+            "raw": text
+        }
+
+    return {
+        "title": "系统状态待确认",
+        "desc": text,
+        "level": "normal",
+        "raw": text
+    }
 
 
 def render_signal_card(title, signal):
@@ -656,7 +691,8 @@ if page == "首页总览":
         update_time = to_beijing_time_str(row.get("update_time"))
         macro_update_time = to_beijing_time_str(row.get("macro_update_time"))
         news_update_time = to_beijing_time_str(row.get("news_update_time"))
-        status_note = safe_text(row.get("status_note"), "系统运行正常")
+        raw_status_note = safe_text(row.get("status_note"), "系统运行正常")
+        status_info = parse_system_status(raw_status_note)
 
         if not macro_update_time:
             macro_update_time = update_time
@@ -690,7 +726,12 @@ if page == "首页总览":
             combined_time = f"宏观：{macro_update_time}\n新闻：{news_update_time}"
             render_status_box("宏观 / 新闻更新时间", combined_time, "normal")
         with s3:
-            render_status_box("系统状态", status_note, infer_status_level(status_note))
+            system_status_text = f"{status_info['title']}\n{status_info['desc']}"
+            render_status_box("系统状态", system_status_text, status_info["level"])
+
+        if status_info["raw"]:
+            with st.expander("查看详细错误信息"):
+                st.code(status_info["raw"])
 
         st.markdown("---")
 
