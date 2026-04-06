@@ -16,7 +16,6 @@ BJ_TZ = pytz.timezone("Asia/Shanghai")
 
 # ============================================
 # 2026 年中国官方节假日 / 调休工作日（手动覆盖）
-# 这层是为了解决你说的：周一但在放假，不能误判为实时
 # ============================================
 CN_REST_DAYS_2026 = {
     date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 3),
@@ -69,20 +68,17 @@ def _first_valid(obj: Any, candidates: Iterable[str]) -> Optional[float]:
 
 
 def _is_cn_workday(d: date) -> bool:
-    # 先走 2026 官方手动覆盖
     if d in CN_WORKDAYS_2026:
         return True
     if d in CN_REST_DAYS_2026:
         return False
 
-    # 再走 china-calendar 通用库
     if china_calendar is not None:
         try:
             return bool(china_calendar.is_workday(d))
         except Exception:
             pass
 
-    # 最后兜底
     return d.weekday() < 5
 
 
@@ -90,13 +86,6 @@ def _prev_cn_workday(d: date) -> date:
     cur = d - timedelta(days=1)
     while not _is_cn_workday(cur):
         cur -= timedelta(days=1)
-    return cur
-
-
-def _next_cn_workday(d: date) -> date:
-    cur = d + timedelta(days=1)
-    while not _is_cn_workday(cur):
-        cur += timedelta(days=1)
     return cur
 
 
@@ -126,11 +115,6 @@ def _is_cn_futures_day_open(dt_obj: datetime) -> bool:
 
 
 def _is_cn_futures_night_open(dt_obj: datetime) -> bool:
-    """
-    适配沪金 / 原油夜盘：
-    21:00-23:59：今天、明天都得是工作日
-    00:00-02:30：昨天、今天都得是工作日
-    """
     t = dt_obj.time()
     today = dt_obj.date()
     yesterday = today - timedelta(days=1)
@@ -165,7 +149,6 @@ def _fetch_sse_index() -> Dict[str, Any]:
         "status": "实时" if is_open else "上个交易日收盘",
     }
 
-    # 先尝试实时接口
     try:
         df = ak.stock_zh_index_spot_em(symbol="上证系列指数")
         df["代码"] = df["代码"].astype(str).str.zfill(6)
@@ -176,17 +159,22 @@ def _fetch_sse_index() -> Dict[str, Any]:
         pct = _first_valid(row, ["涨跌幅"])
 
         result["price"] = price
-        result["change"] = 0.0 if change is None or not is_open else change
-        result["pct"] = 0.0 if pct is None or not is_open else pct
+        result["status"] = "实时" if is_open else "上个交易日收盘"
+
+        if is_open:
+            result["change"] = 0.0 if change is None else change
+            result["pct"] = 0.0 if pct is None else pct
+        else:
+            result["change"] = 0.0
+            result["pct"] = 0.0
+
     except Exception:
         pass
 
-    # 如果没拿到，再兜底历史日线
     if result["price"] is None:
         try:
-            prev_day = _prev_cn_workday(now.date()).strftime("%Y%m%d")
             hist = ak.stock_zh_index_daily_em(symbol="sh000001")
-            if not hist.empty:
+            if hist is not None and not hist.empty:
                 last_row = hist.iloc[-1]
                 result["price"] = _first_valid(last_row, ["close", "收盘"])
                 result["change"] = 0.0
@@ -199,25 +187,27 @@ def _fetch_sse_index() -> Dict[str, Any]:
 
 
 # ============================================
-# BTC
+# BTC：多接口兜底
 # ============================================
 def _fetch_btc_spot() -> Dict[str, Any]:
     result = {
         "name": "BTC现货",
         "price": None,
-        "change": None,
-        "pct": None,
+        "change": 0.0,
+        "pct": 0.0,
         "unit": "USD",
         "status": "实时",
     }
 
+    # 1) Binance
     try:
         price_resp = requests.get(
             "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
             timeout=10
         )
         price_resp.raise_for_status()
-        result["price"] = _safe_float(price_resp.json().get("price"))
+        price_json = price_resp.json()
+        price = _safe_float(price_json.get("price"))
 
         stat_resp = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT",
@@ -225,8 +215,49 @@ def _fetch_btc_spot() -> Dict[str, Any]:
         )
         stat_resp.raise_for_status()
         stat_json = stat_resp.json()
-        result["change"] = _safe_float(stat_json.get("priceChange"))
-        result["pct"] = _safe_float(stat_json.get("priceChangePercent"))
+
+        result["price"] = price
+        result["change"] = _safe_float(stat_json.get("priceChange")) or 0.0
+        result["pct"] = _safe_float(stat_json.get("priceChangePercent")) or 0.0
+
+        if result["price"] is not None:
+            return result
+    except Exception:
+        pass
+
+    # 2) Coinbase
+    try:
+        coinbase_resp = requests.get(
+            "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+            timeout=10
+        )
+        coinbase_resp.raise_for_status()
+        coinbase_json = coinbase_resp.json()
+        price = _safe_float(coinbase_json.get("data", {}).get("amount"))
+
+        if price is not None:
+            result["price"] = price
+            result["change"] = 0.0
+            result["pct"] = 0.0
+            return result
+    except Exception:
+        pass
+
+    # 3) CoinGecko
+    try:
+        gecko_resp = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+            timeout=10
+        )
+        gecko_resp.raise_for_status()
+        gecko_json = gecko_resp.json()
+        price = _safe_float(gecko_json.get("bitcoin", {}).get("usd"))
+
+        if price is not None:
+            result["price"] = price
+            result["change"] = 0.0
+            result["pct"] = 0.0
+            return result
     except Exception:
         pass
 
@@ -280,9 +311,6 @@ def _try_futures_spot(symbol_candidates: Iterable[str], row_keywords: Iterable[s
 
 
 def _try_futures_main_hist(symbol_candidates: Iterable[str]) -> Optional[pd.DataFrame]:
-    """
-    节假日/停盘时，尽量回退到连续合约历史日线
-    """
     for sym in symbol_candidates:
         try:
             df = ak.futures_main_sina(symbol=sym)
@@ -333,6 +361,7 @@ def _fetch_cn_futures(
             result["pct"] = 0.0 if pct is None else pct
             result["status"] = "实时"
         else:
+            # 非交易时段统一不显示涨跌
             result["change"] = 0.0
             result["pct"] = 0.0
             result["status"] = "上个交易日价格"
@@ -342,20 +371,12 @@ def _fetch_cn_futures(
         hist = _try_futures_main_hist(symbol_candidates)
         if hist is not None and not hist.empty:
             last_row = hist.iloc[-1]
-            prev_row = hist.iloc[-2] if len(hist) >= 2 else None
-
             close = _first_valid(last_row, ["close", "收盘", "收盘价", "最新价"])
-            prev_close = _first_valid(prev_row, ["close", "收盘", "收盘价", "最新价"]) if prev_row is not None else None
 
             result["price"] = close
             result["status"] = "上个交易日价格"
-
-            if close is not None and prev_close not in (None, 0):
-                result["change"] = close - prev_close
-                result["pct"] = (close - prev_close) / prev_close * 100
-            else:
-                result["change"] = 0.0
-                result["pct"] = 0.0
+            result["change"] = 0.0
+            result["pct"] = 0.0
 
     return result
 
