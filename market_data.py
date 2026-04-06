@@ -187,7 +187,7 @@ def _fetch_sse_index() -> Dict[str, Any]:
 
 
 # ============================================
-# BTC：多接口兜底
+# BTC：完整兜底（价格 + 涨跌）
 # ============================================
 def _fetch_btc_spot() -> Dict[str, Any]:
     result = {
@@ -199,15 +199,14 @@ def _fetch_btc_spot() -> Dict[str, Any]:
         "status": "实时",
     }
 
-    # 1) Binance
+    # 1) Binance：价格 + 24h 涨跌额 + 24h 涨跌幅
     try:
         price_resp = requests.get(
             "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT",
             timeout=10
         )
         price_resp.raise_for_status()
-        price_json = price_resp.json()
-        price = _safe_float(price_json.get("price"))
+        price = _safe_float(price_resp.json().get("price"))
 
         stat_resp = requests.get(
             "https://api.binance.com/api/v3/ticker/24hr?symbol=BTCUSDT",
@@ -216,16 +215,50 @@ def _fetch_btc_spot() -> Dict[str, Any]:
         stat_resp.raise_for_status()
         stat_json = stat_resp.json()
 
-        result["price"] = price
-        result["change"] = _safe_float(stat_json.get("priceChange")) or 0.0
-        result["pct"] = _safe_float(stat_json.get("priceChangePercent")) or 0.0
+        change = _safe_float(stat_json.get("priceChange"))
+        pct = _safe_float(stat_json.get("priceChangePercent"))
 
-        if result["price"] is not None:
+        if price is not None:
+            result["price"] = price
+            result["change"] = 0.0 if change is None else change
+            result["pct"] = 0.0 if pct is None else pct
             return result
     except Exception:
         pass
 
-    # 2) Coinbase
+    # 2) CoinGecko：价格 + 24h 涨跌幅，再反推涨跌额
+    try:
+        gecko_resp = requests.get(
+            "https://api.coingecko.com/api/v3/coins/bitcoin?localization=false&tickers=false&market_data=true&community_data=false&developer_data=false&sparkline=false",
+            timeout=10
+        )
+        gecko_resp.raise_for_status()
+        gecko_json = gecko_resp.json()
+
+        market_data = gecko_json.get("market_data", {})
+        current_price = _safe_float(market_data.get("current_price", {}).get("usd"))
+        pct_24h = _safe_float(market_data.get("price_change_percentage_24h"))
+
+        if current_price is not None:
+            result["price"] = current_price
+
+            if pct_24h is not None:
+                result["pct"] = pct_24h
+                # 反推 24h 前价格，再算涨跌额
+                prev_price = current_price / (1 + pct_24h / 100) if pct_24h != -100 else None
+                if prev_price is not None:
+                    result["change"] = current_price - prev_price
+                else:
+                    result["change"] = 0.0
+            else:
+                result["change"] = 0.0
+                result["pct"] = 0.0
+
+            return result
+    except Exception:
+        pass
+
+    # 3) Coinbase：保住价格
     try:
         coinbase_resp = requests.get(
             "https://api.coinbase.com/v2/prices/BTC-USD/spot",
@@ -234,24 +267,6 @@ def _fetch_btc_spot() -> Dict[str, Any]:
         coinbase_resp.raise_for_status()
         coinbase_json = coinbase_resp.json()
         price = _safe_float(coinbase_json.get("data", {}).get("amount"))
-
-        if price is not None:
-            result["price"] = price
-            result["change"] = 0.0
-            result["pct"] = 0.0
-            return result
-    except Exception:
-        pass
-
-    # 3) CoinGecko
-    try:
-        gecko_resp = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
-            timeout=10
-        )
-        gecko_resp.raise_for_status()
-        gecko_json = gecko_resp.json()
-        price = _safe_float(gecko_json.get("bitcoin", {}).get("usd"))
 
         if price is not None:
             result["price"] = price
@@ -361,12 +376,10 @@ def _fetch_cn_futures(
             result["pct"] = 0.0 if pct is None else pct
             result["status"] = "实时"
         else:
-            # 非交易时段统一不显示涨跌
             result["change"] = 0.0
             result["pct"] = 0.0
             result["status"] = "上个交易日价格"
 
-    # 如果实时接口没拿到，就退回历史连续合约收盘
     if result["price"] is None:
         hist = _try_futures_main_hist(symbol_candidates)
         if hist is not None and not hist.empty:
