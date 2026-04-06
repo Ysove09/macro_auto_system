@@ -383,14 +383,15 @@ page = st.sidebar.radio("请选择页面", ["首页总览", "行情分析"])
 
 st.sidebar.markdown("---")
 st.sidebar.caption("版本：V1.0")
-st.sidebar.caption("自动化规则：页面打开时若距离上次更新超过1小时，则自动更新一次")
+st.sidebar.caption("自动化规则：仅在首页总览打开时，若距离上次更新超过1小时，则自动更新一次")
 
 if st.sidebar.button("立即自动更新", use_container_width=True):
     with st.spinner("正在抓取新闻并更新决策..."):
         run_auto_update(force=True)
     st.sidebar.success("更新完成，请刷新页面查看。")
 
-if should_auto_update():
+# 关键修改：只在首页总览页面自动检查
+if page == "首页总览" and should_auto_update():
     try:
         with st.spinner("系统检测到超过1小时未更新，正在自动抓取新数据..."):
             run_auto_update()
@@ -499,7 +500,6 @@ if page == "首页总览":
             st.warning(news_text)
 
         st.markdown("---")
-
         render_news_brief()
 
         with st.expander("数据来源说明 / 免责声明"):
