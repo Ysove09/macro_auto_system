@@ -69,9 +69,14 @@ def format_metric_value(price, unit):
     return f"{price:,.2f} {unit}"
 
 
-def format_metric_delta(change, pct):
+def format_metric_delta(change, pct, status=None):
+    # 非实时状态，不显示涨跌徽章
+    if status and status != "实时":
+        return None
+
     if change is None or pct is None:
         return None
+
     sign = "+" if change > 0 else ""
     return f"{sign}{change:.2f} ({sign}{pct:.2f}%)"
 
@@ -573,29 +578,49 @@ if page == "首页总览":
             st.metric(
                 label=f"{market['sse']['name']}（{market['sse']['status']}）",
                 value=format_metric_value(market["sse"]["price"], market["sse"]["unit"]),
-                delta=format_metric_delta(market["sse"]["change"], market["sse"]["pct"]),
+                delta=format_metric_delta(
+                    market["sse"]["change"],
+                    market["sse"]["pct"],
+                    market["sse"]["status"]
+                ),
             )
 
         with m2:
             st.metric(
                 label=f"{market['btc']['name']}（{market['btc']['status']}）",
                 value=format_metric_value(market["btc"]["price"], market["btc"]["unit"]),
-                delta=format_metric_delta(market["btc"]["change"], market["btc"]["pct"]),
+                delta=format_metric_delta(
+                    market["btc"]["change"],
+                    market["btc"]["pct"],
+                    market["btc"]["status"]
+                ),
             )
 
         with m3:
             st.metric(
                 label=f"{market['gold']['name']}（{market['gold']['status']}）",
                 value=format_metric_value(market["gold"]["price"], market["gold"]["unit"]),
-                delta=format_metric_delta(market["gold"]["change"], market["gold"]["pct"]),
+                delta=format_metric_delta(
+                    market["gold"]["change"],
+                    market["gold"]["pct"],
+                    market["gold"]["status"]
+                ),
             )
+            st.caption("主力连续合约口径")
 
         with m4:
             st.metric(
                 label=f"{market['oil']['name']}（{market['oil']['status']}）",
                 value=format_metric_value(market["oil"]["price"], market["oil"]["unit"]),
-                delta=format_metric_delta(market["oil"]["change"], market["oil"]["pct"]),
+                delta=format_metric_delta(
+                    market["oil"]["change"],
+                    market["oil"]["pct"],
+                    market["oil"]["status"]
+                ),
             )
+            st.caption("主力连续合约口径")
+
+        st.caption("说明：A股按中国交易时段显示实时；BTC 为 24 小时现货口径；沪金、原油期货采用主力连续合约口径，休市时显示上个交易日价格。")
 
     live_market_panel()
     st.markdown("---")
