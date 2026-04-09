@@ -1,4 +1,5 @@
 import os
+import html
 import sqlite3
 from pathlib import Path
 from datetime import datetime
@@ -8,7 +9,7 @@ import pytz
 import streamlit as st
 
 from db import init_db, load_latest_decision, load_recent_news
-from auto_update import run_auto_update, should_auto_update
+from auto_update import run_auto_update
 from market_data import get_market_snapshot
 
 try:
@@ -18,6 +19,24 @@ except Exception:
 
 BJ_TZ = pytz.timezone("Asia/Shanghai")
 REPORTS_DIR = "reports"
+VERSION = "V1.0"
+AUTO_RULE_TEXT = "首页默认直接展示现有结果；点击“立即自动更新”时才会主动抓取新数据。"
+DB_CANDIDATES = ("macro_decision.db", "macro_auto.db")
+
+CARD_STYLE_DARK = """
+background: rgba(255,255,255,0.04);
+border: 1px solid rgba(255,255,255,0.06);
+border-radius: 16px;
+padding: 18px;
+"""
+
+REPORT_CARD_STYLE = """
+background: rgba(255,255,255,0.04);
+border: 1px solid rgba(255,255,255,0.06);
+border-radius: 16px;
+padding: 20px 18px;
+margin-bottom: 14px;
+"""
 
 
 def to_beijing_time_str(value):
@@ -63,6 +82,10 @@ def safe_text(value, fallback=""):
     return value_str
 
 
+def escape_html_text(value, fallback=""):
+    return html.escape(safe_text(value, fallback))
+
+
 def format_metric_value(price, unit):
     if price is None:
         return f"-- {unit}"
@@ -70,7 +93,6 @@ def format_metric_value(price, unit):
 
 
 def format_metric_delta(change, pct, status=None):
-    # 非实时状态，不显示涨跌徽章
     if status and status != "实时":
         return None
 
@@ -82,6 +104,9 @@ def format_metric_delta(change, pct, status=None):
 
 
 def render_signal_card(title, signal):
+    safe_title = html.escape(str(title))
+    safe_signal = html.escape(str(signal))
+
     color_map = {
         "开多": ("#153826", "#7CFFB2"),
         "开空": ("#4A1F24", "#FF9B9B"),
@@ -105,7 +130,7 @@ def render_signal_card(title, signal):
                 margin-bottom:18px;
                 letter-spacing:0.5px;
             ">
-                {title}
+                {safe_title}
             </div>
             <div style="
                 font-size:42px;
@@ -113,7 +138,7 @@ def render_signal_card(title, signal):
                 color:{fg};
                 line-height:1.1;
             ">
-                {signal}
+                {safe_signal}
             </div>
         </div>
         """,
@@ -169,11 +194,14 @@ def render_header():
 
 
 def render_section_title(title, subtitle=""):
+    safe_title = html.escape(str(title))
+    safe_subtitle = html.escape(str(subtitle)) if subtitle else ""
+
     st.markdown(
         f"""
         <div style="margin-top:10px; margin-bottom:16px;">
-            <div style="font-size:24px; font-weight:800; color:white;">{title}</div>
-            {"<div style='font-size:14px; color:#9aa5b5; margin-top:6px;'>" + subtitle + "</div>" if subtitle else ""}
+            <div style="font-size:24px; font-weight:800; color:white;">{safe_title}</div>
+            {"<div style='font-size:14px; color:#9aa5b5; margin-top:6px;'>" + safe_subtitle + "</div>" if subtitle else ""}
         </div>
         """,
         unsafe_allow_html=True
@@ -198,26 +226,60 @@ def render_footer():
     )
 
 
+@st.cache_data(ttl=60)
+def get_market_snapshot_cached():
+    return get_market_snapshot()
+
+
+@st.cache_data(ttl=30)
+def load_latest_decision_cached():
+    return load_latest_decision()
+
+
+@st.cache_data(ttl=30)
+def load_recent_news_cached(limit=3):
+    return load_recent_news(limit=limit)
+
+
+@st.cache_data(ttl=30)
+def get_previous_decision_cached():
+    for db_path in DB_CANDIDATES:
+        if not os.path.exists(db_path):
+            continue
+
+        try:
+            conn = sqlite3.connect(db_path)
+            query = """
+                SELECT *
+                FROM latest_decision
+                ORDER BY id DESC
+                LIMIT 1 OFFSET 1
+            """
+            df = pd.read_sql_query(query, conn)
+            conn.close()
+
+            if not df.empty:
+                return df.iloc[0].to_dict()
+        except Exception:
+            continue
+
+    return None
+
+
 def render_news_brief():
     render_section_title("研究简报", "最近抓取新闻（最新 3 条）")
-    recent_news = load_recent_news(limit=3)
+    recent_news = load_recent_news_cached(limit=3)
 
     if not recent_news.empty:
-        for idx, item in recent_news.iterrows():
-            title = safe_text(item["news_title"], "无标题")
-            source = safe_text(item["source"], "未知")
-            published = to_beijing_time_str(item["published"])
-            explanation = safe_text(item["explanation"], "暂无说明")
+        for num, (_, item) in enumerate(recent_news.iterrows(), 1):
+            title = escape_html_text(item["news_title"], "无标题")
+            source = escape_html_text(item["source"], "未知")
+            published = escape_html_text(to_beijing_time_str(item["published"]), "")
+            explanation = escape_html_text(item["explanation"], "暂无说明").replace("\n", "<br>")
 
             st.markdown(
                 f"""
-                <div style="
-                    background:rgba(255,255,255,0.025);
-                    border:1px solid rgba(255,255,255,0.06);
-                    border-radius:16px;
-                    padding:18px 18px 16px 18px;
-                    margin-bottom:14px;
-                ">
+                <div style="{CARD_STYLE_DARK} margin-bottom:14px;">
                     <div style="
                         font-size:18px;
                         font-weight:700;
@@ -225,7 +287,7 @@ def render_news_brief():
                         line-height:1.6;
                         margin-bottom:8px;
                     ">
-                        {idx + 1}. {title}
+                        {num}. {title}
                     </div>
                     <div style="
                         font-size:13px;
@@ -249,38 +311,12 @@ def render_news_brief():
         st.write("暂无新闻数据。")
 
 
-def get_previous_decision():
-    db_candidates = ["macro_decision.db", "macro_auto.db"]
-
-    for db_path in db_candidates:
-        if not os.path.exists(db_path):
-            continue
-
-        try:
-            conn = sqlite3.connect(db_path)
-            query = """
-                SELECT *
-                FROM latest_decision
-                ORDER BY id DESC
-                LIMIT 1 OFFSET 1
-            """
-            df = pd.read_sql_query(query, conn)
-            conn.close()
-
-            if not df.empty:
-                return df.iloc[0]
-        except Exception:
-            continue
-
-    return None
-
-
 def render_change_summary(current_row):
-    previous_row = get_previous_decision()
+    previous_row_dict = get_previous_decision_cached()
 
     render_section_title("本次结论变化", "与上一条有效结果对比")
 
-    if previous_row is None:
+    if previous_row_dict is None:
         st.info("当前暂无可对比的上一条记录。")
         return
 
@@ -293,8 +329,8 @@ def render_change_summary(current_row):
 
     changes = []
     for label, col in assets:
-        prev_val = safe_text(previous_row.get(col), "")
-        curr_val = safe_text(current_row.get(col), "")
+        prev_val = safe_text(previous_row_dict.get(col, ""), "")
+        curr_val = safe_text(current_row[col] if col in current_row.index else "", "")
         if prev_val != curr_val:
             changes.append((label, prev_val, curr_val))
 
@@ -304,6 +340,10 @@ def render_change_summary(current_row):
 
     cols = st.columns(min(4, len(changes)))
     for i, (label, prev_val, curr_val) in enumerate(changes):
+        safe_label = html.escape(label)
+        safe_prev = html.escape(prev_val)
+        safe_curr = html.escape(curr_val)
+
         with cols[i % len(cols)]:
             st.markdown(
                 f"""
@@ -314,9 +354,9 @@ def render_change_summary(current_row):
                     min-height:92px;
                     border:1px solid rgba(255,255,255,0.06);
                 ">
-                    <div style="font-size:14px;color:#c8cfda;margin-bottom:10px;">{label}</div>
-                    <div style="font-size:16px;color:#9fb0c8;margin-bottom:6px;">{prev_val}</div>
-                    <div style="font-size:18px;color:#ffffff;">→ {curr_val}</div>
+                    <div style="font-size:14px;color:#c8cfda;margin-bottom:10px;">{safe_label}</div>
+                    <div style="font-size:16px;color:#9fb0c8;margin-bottom:6px;">{safe_prev}</div>
+                    <div style="font-size:18px;color:#ffffff;">→ {safe_curr}</div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -357,7 +397,7 @@ def get_repo_reports():
     return files
 
 
-def render_pdf_pages(file_path):
+def render_pdf_pages(file_path, viewer_key="pdf_viewer"):
     if fitz is None:
         st.warning("当前环境未安装 pymupdf，暂时无法站内阅读 PDF。请先在 requirements.txt 里加入：pymupdf")
         return
@@ -365,17 +405,30 @@ def render_pdf_pages(file_path):
     try:
         doc = fitz.open(file_path)
         page_count = len(doc)
-        st.caption(f"共 {page_count} 页")
 
-        for i in range(page_count):
-            page = doc.load_page(i)
-            pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
-            img_bytes = pix.tobytes("png")
-            st.image(img_bytes, use_container_width=True)
-            st.markdown(
-                f"<div style='text-align:center;color:#8d98aa;font-size:12px;margin-top:-6px;margin-bottom:16px;'>第 {i+1} 页</div>",
-                unsafe_allow_html=True
-            )
+        if page_count <= 0:
+            st.info("PDF 没有可显示的页面。")
+            doc.close()
+            return
+
+        st.caption(f"共 {page_count} 页")
+        page_num = st.number_input(
+            "跳转到第几页",
+            min_value=1,
+            max_value=page_count,
+            value=1,
+            step=1,
+            key=viewer_key
+        )
+
+        page = doc.load_page(page_num - 1)
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.6, 1.6), alpha=False)
+        img_bytes = pix.tobytes("png")
+        st.image(img_bytes, use_container_width=True)
+        st.markdown(
+            f"<div style='text-align:center;color:#8d98aa;font-size:12px;margin-top:8px;margin-bottom:8px;'>第 {page_num} 页 / 共 {page_count} 页</div>",
+            unsafe_allow_html=True
+        )
 
         doc.close()
     except Exception as e:
@@ -416,7 +469,7 @@ def render_report_reader(file_name):
     st.markdown("---")
 
     if suffix == "pdf":
-        render_pdf_pages(file_path)
+        render_pdf_pages(file_path, viewer_key=f"pdf_{file_name}")
 
     elif suffix in ["txt", "md", "py", "json"]:
         try:
@@ -456,7 +509,7 @@ def render_report_cards():
 
     for report in reports:
         upload_time = datetime.fromtimestamp(report["mtime"], BJ_TZ).strftime("%Y-%m-%d %H:%M")
-        title = safe_text(report["title"], "未命名文件")
+        title = html.escape(safe_text(report["title"], "未命名文件"))
         file_name = report["file_name"]
         file_path = report["file_path"]
         pinned = report["pinned"]
@@ -477,12 +530,7 @@ def render_report_cards():
 
         st.markdown(
             f"""
-            <div style="
-                background:#f2f2f2;
-                border-radius:16px;
-                padding:22px 18px;
-                margin-bottom:14px;
-            ">
+            <div style="{REPORT_CARD_STYLE}">
                 <div style="
                     display:flex;
                     align-items:flex-end;
@@ -491,21 +539,21 @@ def render_report_cards():
                     flex-wrap:wrap;
                 ">
                     <div style="
-                        font-size:42px;
+                        font-size:24px;
                         font-weight:800;
-                        color:#e53935;
-                        line-height:1.2;
+                        color:#ffffff;
+                        line-height:1.5;
                     ">
                         {title}
                         {badge_html}
                     </div>
                     <div style="
-                        font-size:14px;
-                        color:#666666;
+                        font-size:13px;
+                        color:#9aa5b5;
                         white-space:nowrap;
-                        padding-bottom:6px;
+                        padding-bottom:4px;
                     ">
-                        上传时间：{upload_time}
+                        上传时间：{html.escape(upload_time)}
                     </div>
                 </div>
             </div>
@@ -543,24 +591,23 @@ st.sidebar.title("功能导航")
 page = st.sidebar.radio("请选择页面", ["首页总览", "行情分析"])
 
 st.sidebar.markdown("---")
-st.sidebar.caption("版本：V1.0")
-st.sidebar.caption("自动化规则：仅在首页总览打开时，若距离上次更新超过1小时，则自动更新一次")
+st.sidebar.caption(f"版本：{VERSION}")
+st.sidebar.info(AUTO_RULE_TEXT)
 
 if st.sidebar.button("立即自动更新", use_container_width=True):
     with st.spinner("正在抓取新闻并更新决策..."):
         run_auto_update(force=True)
+
+    # 更新后清缓存，确保页面立刻拿到新结果
+    st.cache_data.clear()
+
     st.sidebar.success("更新完成，请刷新页面查看。")
 
-if page == "首页总览" and should_auto_update():
-    try:
-        with st.spinner("系统检测到超过1小时未更新，正在自动抓取新数据..."):
-            run_auto_update()
-    except Exception as e:
-        st.warning(f"自动更新失败，但页面仍会显示最近一次有效结果：{e}")
-
+# 注意：这里故意移除了“进入首页自动更新”逻辑
+# 这样首屏加载速度会明显提升
 
 if page == "首页总览":
-    latest_df = load_latest_decision()
+    latest_df = load_latest_decision_cached()
 
     render_header()
     st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
@@ -569,7 +616,7 @@ if page == "首页总览":
     def live_market_panel():
         render_section_title("实时行情", "跟踪主要风险资产与宏观敏感品种")
 
-        market = get_market_snapshot()
+        market = get_market_snapshot_cached()
         st.caption(f"行情更新时间（北京时间）：{market['update_time']}")
 
         m1, m2, m3, m4 = st.columns(4)
